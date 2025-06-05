@@ -80,7 +80,7 @@ def berechne_punkte(spiel_id):
 
         if base_punkte > 0:
             new_streak = old_streak + 1
-            # Multiplier = 2 ab dem 3. korrekten Tipp in Folge, bleibt bei 2 auch bei größerem Streak
+            # Multiplier = 2 ab dem 3. korrekten Tipp, bleibt bei 2 auch bei größerem Streak
             multiplier = 2 if new_streak >= 3 else 1
             actual_punkte = base_punkte * multiplier
             # Streak aktualisieren
@@ -121,23 +121,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin-Befehl: Ein neues Spiel anlegen."""
-    mitglied = update.effective_chat.get_member(update.effective_user.id)
-    if not mitglied.status in ("administrator", "creator"):
-        await update.message.reply_text("Nur Admins dürfen neue Spiele anlegen.")
+    try:
+        chat_admin = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
+        if chat_admin.status not in ("administrator", "creator"):
+            await update.message.reply_text("❌ Nur Gruppen-Admins dürfen ein neues Spiel anlegen.")
+            return
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Fehler beim Admin-Check: {e}")
         return
 
     if len(context.args) < 1:
-        await update.message.reply_text("Usage: /neuenspiel <Beschreibung>")
+        await update.message.reply_text(
+            "📌 Bitte gib eine Spielbeschreibung an.\n\nBeispiel:\n`/neuenspiel Türkei vs Deutschland`",
+            parse_mode="Markdown"
+        )
         return
 
-    beschr = " ".join(context.args)
+    beschreibung = " ".join(context.args)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("INSERT INTO spielen (beschreibung) VALUES (?)", (beschr,))
+    c.execute("INSERT INTO spielen (beschreibung) VALUES (?)", (beschreibung,))
     conn.commit()
     spiel_id = c.lastrowid
     conn.close()
-    await update.message.reply_text(f"Spiel angelegt mit ID {spiel_id}: {beschr}")
+
+    await update.message.reply_text(
+        f"✅ Neues Spiel angelegt: *{beschreibung}*\n🆔 Spiel-ID: `{spiel_id}`",
+        parse_mode="Markdown"
+    )
 
 async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User-Befehl: Normales Tipp-Ergebnis abgeben."""
@@ -180,13 +191,20 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin-Befehl: Echtes Ergebnis eintragen und Punkte berechnen."""
-    mitglied = update.effective_chat.get_member(update.effective_user.id)
-    if not mitglied.status in ("administrator", "creator"):
-        await update.message.reply_text("Nur Admins dürfen das Ergebnis eintragen.")
+    try:
+        chat_admin = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
+        if chat_admin.status not in ("administrator", "creator"):
+            await update.message.reply_text("❌ Nur Gruppen-Admins dürfen das Ergebnis eintragen.")
+            return
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Fehler beim Admin-Check: {e}")
         return
 
     if len(context.args) != 2 or ":" not in context.args[1]:
-        await update.message.reply_text("Usage: /ergebnis <Spiel-ID> <ToreHeim>:<ToreGast>")
+        await update.message.reply_text(
+            "📌 Bitte korrekt eingeben:\n`/ergebnis <Spiel-ID> <ToreHeim>:<ToreGast>`",
+            parse_mode="Markdown"
+        )
         return
 
     try:
@@ -194,7 +212,7 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tore_str = context.args[1]
         eh, eg = map(int, tore_str.split(":"))
     except ValueError:
-        await update.message.reply_text("Ungültiges Format. Beispiel: /ergebnis 1 2:1")
+        await update.message.reply_text("Ungültiges Format. Beispiel: `/ergebnis 1 2:1`", parse_mode="Markdown")
         return
 
     conn = sqlite3.connect(DB_PATH)
@@ -202,7 +220,7 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT 1 FROM spielen WHERE spiel_id = ?", (spiel_id,))
     if not c.fetchone():
         conn.close()
-        await update.message.reply_text(f"Spiel mit ID {spiel_id} existiert nicht.")
+        await update.message.reply_text(f"❌ Spiel mit ID {spiel_id} existiert nicht.")
         return
 
     c.execute("""
@@ -212,9 +230,8 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    # Punkteberechnung aufrufen (inkl. Streak-Logik)
     berechne_punkte(spiel_id)
-    await update.message.reply_text(f"Ergebnis für Spiel {spiel_id} gesetzt: {eh}:{eg} – Punkte berechnet.")
+    await update.message.reply_text(f"✅ Ergebnis für Spiel {spiel_id} gesetzt: {eh}:{eg} – Punkte berechnet.")
 
 async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Zeigt Rangliste aller Tipper (inkl. Streak-Punkte)."""
