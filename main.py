@@ -3,7 +3,9 @@ import sqlite3
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TOKEN = os.environ.get("TOKEN")
+if not TOKEN:
+    raise RuntimeError("Telegram-Bot Token (ENV VAR 'TOKEN') fehlt!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Willkommen beim Fußball-Tipp-Bot!")
