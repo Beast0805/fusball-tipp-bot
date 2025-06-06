@@ -213,17 +213,14 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     spiel_id = c.lastrowid
     conn.close()
 
-    msg = await update.message.reply_text(
+    # Bot-Antwort (wird NICHT gelöscht)
+    await update.message.reply_text(
         f"✅ Neues Spiel angelegt: *{beschreibung}*\n"
         f"🆔 Spiel-ID: `{spiel_id}`\n"
         f"⏰ Startzeit: `{startzeit_str}`",
         parse_mode="Markdown"
     )
-    await asyncio.sleep(5)
-    try:
-        await msg.delete()
-    except BadRequest:
-        pass
+    # Nur die User-Nachricht löschen, nicht die Bot-Antwort
     try:
         await update.message.delete()
     except BadRequest:
@@ -512,7 +509,7 @@ async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not rows:
         msg = await update.message.reply_text("Noch keine Tipps bzw. keine Punkte.")
-        await asyncio.sleep(5)
+        await asyncio.sleep(30)
         try:
             await msg.delete()
         except BadRequest:
@@ -527,7 +524,7 @@ async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for idx, (user, pts) in enumerate(rows, start=1):
         text += f"{idx}. {user}: {pts} Punkte\n"
     msg = await update.message.reply_text(text)
-    await asyncio.sleep(5)
+    await asyncio.sleep(30)
     try:
         await msg.delete()
     except BadRequest:
