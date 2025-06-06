@@ -6,17 +6,11 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.error import BadRequest
 
-# --- 1) Token und Port aus ENV lesen ---
-TOKEN = os.environ.get("TOKEN")
-if not TOKEN:
-    raise RuntimeError("ENV VAR 'TOKEN' fehlt!")
+# --- 1) Ordner für persistente Speicherung erstellen und DB-Pfad setzen ---
+os.makedirs("/persistent", exist_ok=True)
+DB_PATH = "/persistent/database.db"
 
-PORT = int(os.environ.get("PORT", "8443"))
-
-# --- 2) Pfad zur SQLite-Datenbank ---
-DB_PATH = "database.db"
-
-# --- 3) Datenbank initialisieren (mit Startzeit) ---
+# --- 2) Datenbank initialisieren (mit Startzeit) ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -52,7 +46,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- 4) Punkteberechnung mit Streak-Logik (Multiplier capped at 2) ---
+# --- 3) Punkteberechnung mit Streak-Logik (Multiplier capped at 2) ---
 def berechne_punkte(spiel_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -110,7 +104,7 @@ def berechne_punkte(spiel_id):
     conn.commit()
     conn.close()
 
-# --- 5) Bot-Handler-Funktionen ---
+# --- 4) Bot-Handler-Funktionen ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (
@@ -533,10 +527,10 @@ async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest:
         pass
 
-# --- 6) Bot-Einrichtung & Webhook starten ---
+# --- 5) Bot-Einrichtung & Webhook starten ---
 if __name__ == "__main__":
     init_db()
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(os.environ.get("TOKEN")).build()
 
     # CommandHandler registrieren
     app.add_handler(CommandHandler("start", start))
@@ -551,9 +545,10 @@ if __name__ == "__main__":
     if not WEBHOOK_URL:
         raise RuntimeError("ENV VAR 'RENDER_EXTERNAL_URL' fehlt!")
 
+    PORT = int(os.environ.get("PORT", "8443"))
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+        url_path=os.environ.get("TOKEN"),
+        webhook_url=f"{WEBHOOK_URL}/{os.environ.get('TOKEN')}"
     )
