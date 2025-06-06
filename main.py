@@ -61,7 +61,7 @@ def berechne_punkte(spiel_id):
     ergebnis = c.fetchone()
     if not ergebnis or ergebnis[0] is None:
         conn.close()
-        return  # kein Ergebnis eingetragen
+        return  # Kein Ergebnis eingetragen
     eh, eg = ergebnis
 
     # Für jeden Tipp Punkte berechnen und Streaks updaten
@@ -202,7 +202,6 @@ async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "📅 **Aktuelle Spiele:**\n\n"
     for spiel_id, beschreibung, startzeit_iso in rows:
-        # Optional: nur zukünftige Spiele anzeigen
         startzeit = datetime.fromisoformat(startzeit_iso)
         text += f"ID {spiel_id}: {beschreibung} (Start: {startzeit.strftime('%Y-%m-%d %H:%M')})\n"
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -212,8 +211,9 @@ async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User-Befehl: Normales Tipp-Ergebnis abgeben (nur 1 Tipp pro Spiel, vor Startzeit)."""
     if len(context.args) != 2 or ":" not in context.args[1]:
-        await update.message.reply_text("Usage: /tippen <Spiel-ID> <ToreHeim>:<ToreGast>")
+        msg = await update.message.reply_text("Usage: /tippen <Spiel-ID> <ToreHeim>:<ToreGast>")
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
@@ -221,8 +221,9 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         spiel_id = int(context.args[0])
         th, tg = map(int, context.args[1].split(":"))
     except ValueError:
-        await update.message.reply_text("Ungültiges Format. Beispiel: /tippen 1 2:1")
+        msg = await update.message.reply_text("Ungültiges Format. Beispiel: /tippen 1 2:1")
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
@@ -241,14 +242,18 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         alle_spiele = c.fetchall()
         conn.close()
         if not alle_spiele:
-            await update.message.reply_text("❌ Spiel-ID ungültig. Es sind aktuell keine Spiele angelegt.")
-        else:
-            text = "❌ Spiel-ID ungültig. Aktuelle Spiele:\n"
-            for sid, beschr, start_iso in alle_spiele:
-                start_dt = datetime.fromisoformat(start_iso)
-                text += f"ID {sid}: {beschr} (Start: {start_dt.strftime('%Y-%m-%d %H:%M')})\n"
-            await update.message.reply_text(text)
+            msg = await update.message.reply_text("❌ Spiel-ID ungültig. Es sind aktuell keine Spiele angelegt.")
+            await asyncio.sleep(5)
+            await msg.delete()
+            await update.message.delete()
+            return
+        text = "❌ Spiel-ID ungültig. Aktuelle Spiele:\n"
+        for sid, beschr, start_iso in alle_spiele:
+            start_dt = datetime.fromisoformat(start_iso)
+            text += f"ID {sid}: {beschr} (Start: {start_dt.strftime('%Y-%m-%d %H:%M')})\n"
+        msg = await update.message.reply_text(text)
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
@@ -258,8 +263,9 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Prüfen, ob Spiel bereits gestartet ist
     if datetime.now() >= startzeit:
         conn.close()
-        await update.message.reply_text("⏰ Das Spiel ist bereits gestartet – Tipps sind nicht mehr möglich.")
+        msg = await update.message.reply_text("⏰ Das Spiel ist bereits gestartet – Tipps sind nicht mehr möglich.")
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
@@ -267,10 +273,11 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT 1 FROM tipps WHERE spiel_id = ? AND user_id = ?", (spiel_id, user_id))
     if c.fetchone():
         conn.close()
-        await update.message.reply_text(
+        msg = await update.message.reply_text(
             f"⚠️ Du hast für Spiel {spiel_id} bereits einen Tipp abgegeben. Änderungen sind nicht möglich."
         )
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
@@ -282,10 +289,11 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    await update.message.reply_text(
+    msg = await update.message.reply_text(
         f"{username}, dein Tipp für Spiel {spiel_id} wurde gespeichert: {th}:{tg}. Viel Glück!"
     )
     await asyncio.sleep(5)
+    await msg.delete()
     await update.message.delete()
 
 async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -293,22 +301,25 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_admin = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
         if chat_admin.status not in ("administrator", "creator"):
-            await update.message.reply_text("❌ Nur Gruppen-Admins dürfen das Ergebnis eintragen.")
+            msg = await update.message.reply_text("❌ Nur Gruppen-Admins dürfen das Ergebnis eintragen.")
             await asyncio.sleep(5)
+            await msg.delete()
             await update.message.delete()
             return
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Fehler beim Admin-Check: {e}")
+        msg = await update.message.reply_text(f"⚠️ Fehler beim Admin-Check: {e}")
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
     if len(context.args) != 2 or ":" not in context.args[1]:
-        await update.message.reply_text(
+        msg = await update.message.reply_text(
             "📌 Bitte korrekt eingeben:\n`/ergebnis <Spiel-ID> <ToreHeim>:<ToreGast>`",
             parse_mode="Markdown"
         )
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
@@ -316,8 +327,9 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         spiel_id = int(context.args[0])
         eh, eg = map(int, context.args[1].split(":"))
     except ValueError:
-        await update.message.reply_text("Ungültiges Format. Beispiel: `/ergebnis 1 2:1`", parse_mode="Markdown")
+        msg = await update.message.reply_text("Ungültiges Format. Beispiel: `/ergebnis 1 2:1`", parse_mode="Markdown")
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
@@ -326,8 +338,9 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT 1 FROM spielen WHERE spiel_id = ?", (spiel_id,))
     if not c.fetchone():
         conn.close()
-        await update.message.reply_text(f"❌ Spiel mit ID {spiel_id} existiert nicht.")
+        msg = await update.message.reply_text(f"❌ Spiel mit ID {spiel_id} existiert nicht.")
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
@@ -339,10 +352,11 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     berechne_punkte(spiel_id)
-    await update.message.reply_text(
+    msg = await update.message.reply_text(
         f"✅ Ergebnis für Spiel {spiel_id} gesetzt: {eh}:{eg} – Punkte berechnet."
     )
     await asyncio.sleep(5)
+    await msg.delete()
     await update.message.delete()
 
 async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -360,16 +374,18 @@ async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if not rows:
-        await update.message.reply_text("Noch keine Tipps bzw. keine Punkte.")
+        msg = await update.message.reply_text("Noch keine Tipps bzw. keine Punkte.")
         await asyncio.sleep(5)
+        await msg.delete()
         await update.message.delete()
         return
 
     text = "🏆 Rangliste 🏆\n\n"
     for idx, (user, pts) in enumerate(rows, start=1):
         text += f"{idx}. {user}: {pts} Punkte\n"
-    await update.message.reply_text(text)
+    msg = await update.message.reply_text(text)
     await asyncio.sleep(5)
+    await msg.delete()
     await update.message.delete()
 
 # --- 6) Bot-Einrichtung & Webhook starten ---
