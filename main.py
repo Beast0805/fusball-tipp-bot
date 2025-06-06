@@ -118,6 +118,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/neuenspiel <Beschreibung> | <YYYY-MM-DD HH:MM> – als Admin ein neues Spiel anlegen\n"
         "/tippen <Spiel-ID> <ToreHeim>:<ToreGast> – Tipp abgeben (nur 1 Tipp pro Spiel, vor Startzeit)\n"
         "/ergebnis <Spiel-ID> <ToreHeim>:<ToreGast> – als Admin echtes Ergebnis eintragen\n"
+        "/spiele – zeigt alle aktiven Spiele mit ID und Beschreibung\n"
         "/rangliste – zeige aktuelle Rangliste aller Tipper"
     )
     await update.message.reply_text(txt)
@@ -185,6 +186,29 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.sleep(5)
     await update.message.delete()
 
+async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Zeigt alle aktiven Spiele mit ID und Beschreibung."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT spiel_id, beschreibung, startzeit FROM spielen")
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text("📌 Aktuell sind keine Spiele angelegt.")
+        await asyncio.sleep(5)
+        await update.message.delete()
+        return
+
+    text = "📅 **Aktuelle Spiele:**\n\n"
+    for spiel_id, beschreibung, startzeit_iso in rows:
+        # Optional: nur zukünftige Spiele anzeigen
+        startzeit = datetime.fromisoformat(startzeit_iso)
+        text += f"ID {spiel_id}: {beschreibung} (Start: {startzeit.strftime('%Y-%m-%d %H:%M')})\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+    await asyncio.sleep(5)
+    await update.message.delete()
+
 async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User-Befehl: Normales Tipp-Ergebnis abgeben (nur 1 Tipp pro Spiel, vor Startzeit)."""
     if len(context.args) != 2 or ":" not in context.args[1]:
@@ -209,15 +233,27 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c = conn.cursor()
 
     # Prüfen, ob das Spiel existiert und Startzeit abrufen
-    c.execute("SELECT startzeit FROM spielen WHERE spiel_id = ?", (spiel_id,))
+    c.execute("SELECT beschreibung, startzeit FROM spielen WHERE spiel_id = ?", (spiel_id,))
     row = c.fetchone()
     if not row:
+        # Ungültige Spiel-ID → Liste der aktiven Spiele anzeigen
+        c.execute("SELECT spiel_id, beschreibung, startzeit FROM spielen")
+        alle_spiele = c.fetchall()
         conn.close()
-        await update.message.reply_text(f"❌ Spiel mit ID {spiel_id} existiert nicht.")
+        if not alle_spiele:
+            await update.message.reply_text("❌ Spiel-ID ungültig. Es sind aktuell keine Spiele angelegt.")
+        else:
+            text = "❌ Spiel-ID ungültig. Aktuelle Spiele:\n"
+            for sid, beschr, start_iso in alle_spiele:
+                start_dt = datetime.fromisoformat(start_iso)
+                text += f"ID {sid}: {beschr} (Start: {start_dt.strftime('%Y-%m-%d %H:%M')})\n"
+            await update.message.reply_text(text)
         await asyncio.sleep(5)
         await update.message.delete()
         return
-    startzeit = datetime.fromisoformat(row[0])
+
+    beschreibung, startzeit_iso = row
+    startzeit = datetime.fromisoformat(startzeit_iso)
 
     # Prüfen, ob Spiel bereits gestartet ist
     if datetime.now() >= startzeit:
@@ -344,6 +380,7 @@ if __name__ == "__main__":
     # CommandHandler registrieren
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("neuenspiel", neuenspiel))
+    app.add_handler(CommandHandler("spiele", spiele))
     app.add_handler(CommandHandler("tippen", tippen))
     app.add_handler(CommandHandler("ergebnis", ergebnis))
     app.add_handler(CommandHandler("rangliste", rangliste))
