@@ -381,14 +381,13 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    msg = await update.message.reply_text(
+    # Bot-Antwort (bleibt stehen)
+    await update.message.reply_text(
         f"{username}, dein Tipp für Spiel {spiel_id} wurde gespeichert: {th}:{tg}. Viel Glück!"
     )
+
+    # Nur das User-Command löschen (nach kurzer Verzögerung)
     await asyncio.sleep(5)
-    try:
-        await msg.delete()
-    except BadRequest:
-        pass
     try:
         await update.message.delete()
     except BadRequest:
