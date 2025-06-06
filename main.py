@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -13,20 +14,21 @@ PORT = int(os.environ.get("PORT", "8443"))
 # --- 2) Pfad zur SQLite-Datenbank ---
 DB_PATH = "database.db"
 
-# --- 3) Datenbank initialisieren ---
+# --- 3) Datenbank initialisieren (mit Startzeit) ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Tabelle für Spiele
+    # Tabelle für Spiele mit 'startzeit' als ISO-String
     c.execute("""
     CREATE TABLE IF NOT EXISTS spielen (
         spiel_id     INTEGER PRIMARY KEY AUTOINCREMENT,
         beschreibung TEXT NOT NULL,
+        startzeit    TEXT NOT NULL,
         tore_heim    INTEGER,
         tore_gast    INTEGER
     )
     """)
-    # Tabelle für normale Tipps
+    # Tabelle für Tipps (ein Tipp pro Spiel & User)
     c.execute("""
     CREATE TABLE IF NOT EXISTS tipps (
         spiel_id   INTEGER NOT NULL,
@@ -53,7 +55,7 @@ def berechne_punkte(spiel_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    # 4a) Echtes Ergebnis abrufen
+    # Echtes Ergebnis abrufen
     c.execute("SELECT tore_heim, tore_gast FROM spielen WHERE spiel_id = ?", (spiel_id,))
     ergebnis = c.fetchone()
     if not ergebnis or ergebnis[0] is None:
@@ -61,7 +63,7 @@ def berechne_punkte(spiel_id):
         return  # kein Ergebnis eingetragen
     eh, eg = ergebnis
 
-    # 4b) Für jeden Tipp Punkte berechnen und Streaks updaten
+    # Für jeden Tipp Punkte berechnen und Streaks updaten
     c.execute("SELECT user_id, username, tore_heim, tore_gast FROM tipps WHERE spiel_id = ?", (spiel_id,))
     alle_tipps = c.fetchall()
     for user_id, username, th, tg in alle_tipps:
@@ -112,15 +114,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (
         "Willkommen beim Fußball-Tipp-Bot!\n\n"
         "Befehle:\n"
-        "/neuenspiel <Beschreibung> – als Admin ein neues Spiel anlegen\n"
-        "/tippen <Spiel-ID> <ToreHeim>:<ToreGast> – Tipp abgeben\n"
+        "/neuenspiel <Beschreibung> | <YYYY-MM-DD HH:MM> – als Admin ein neues Spiel anlegen\n"
+        "/tippen <Spiel-ID> <ToreHeim>:<ToreGast> – Tipp abgeben (nur ein Tipp pro Spiel, vor Spielstart)\n"
         "/ergebnis <Spiel-ID> <ToreHeim>:<ToreGast> – als Admin echtes Ergebnis eintragen\n"
         "/rangliste – zeige aktuelle Rangliste aller Tipper"
     )
     await update.message.reply_text(txt)
 
 async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin-Befehl: Ein neues Spiel anlegen."""
+    """Admin-Befehl: Ein neues Spiel anlegen mit Startzeit."""
     try:
         chat_admin = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
         if chat_admin.status not in ("administrator", "creator"):
@@ -130,28 +132,48 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Fehler beim Admin-Check: {e}")
         return
 
-    if len(context.args) < 1:
+    # Erwartetes Format: Beschreibung | YYYY-MM-DD HH:MM
+    text = update.message.text.partition(" ")[2]
+    if "|" not in text:
         await update.message.reply_text(
-            "📌 Bitte gib eine Spielbeschreibung an.\n\nBeispiel:\n`/neuenspiel Türkei vs Deutschland`",
+            "📌 Falsches Format. Bitte so eingeben:\n"
+            "`/neuenspiel <Beschreibung> | <YYYY-MM-DD HH:MM>`",
             parse_mode="Markdown"
         )
         return
 
-    beschreibung = " ".join(context.args)
+    beschreibung_part, _, zeit_part = text.partition("|")
+    beschreibung = beschreibung_part.strip()
+    startzeit_str = zeit_part.strip()
+
+    # Startzeit validieren
+    try:
+        startzeit = datetime.fromisoformat(startzeit_str)
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Ungültiges Datum/Uhrzeit-Format. Beispiel:\n"
+            "`/neuenspiel Türkei vs Deutschland | 2025-07-01 18:30`",
+            parse_mode="Markdown"
+        )
+        return
+
+    # In DB speichern
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("INSERT INTO spielen (beschreibung) VALUES (?)", (beschreibung,))
+    c.execute("INSERT INTO spielen (beschreibung, startzeit) VALUES (?, ?)", (beschreibung, startzeit.isoformat()))
     conn.commit()
     spiel_id = c.lastrowid
     conn.close()
 
     await update.message.reply_text(
-        f"✅ Neues Spiel angelegt: *{beschreibung}*\n🆔 Spiel-ID: `{spiel_id}`",
+        f"✅ Neues Spiel angelegt: *{beschreibung}*\n"
+        f"🆔 Spiel-ID: `{spiel_id}`\n"
+        f"⏰ Startzeit: `{startzeit_str}`",
         parse_mode="Markdown"
     )
 
 async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User-Befehl: Normales Tipp-Ergebnis abgeben."""
+    """User-Befehl: Normales Tipp-Ergebnis abgeben (nur ein Tipp pro Spiel, vor Startzeit)."""
     if len(context.args) != 2 or ":" not in context.args[1]:
         await update.message.reply_text("Usage: /tippen <Spiel-ID> <ToreHeim>:<ToreGast>")
         return
@@ -169,18 +191,35 @@ async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT 1 FROM spielen WHERE spiel_id = ?", (spiel_id,))
-    if not c.fetchone():
+
+    # Prüfen, ob das Spiel existiert und Startzeit abrufen
+    c.execute("SELECT startzeit FROM spielen WHERE spiel_id = ?", (spiel_id,))
+    row = c.fetchone()
+    if not row:
         conn.close()
-        await update.message.reply_text(f"Spiel mit ID {spiel_id} existiert nicht.")
+        await update.message.reply_text(f"❌ Spiel mit ID {spiel_id} existiert nicht.")
+        return
+    startzeit = datetime.fromisoformat(row[0])
+
+    # Prüfen, ob Spiel bereits gestartet ist
+    if datetime.now() >= startzeit:
+        conn.close()
+        await update.message.reply_text("⏰ Das Spiel ist bereits gestartet – Tipps sind nicht mehr möglich.")
         return
 
+    # Prüfen, ob der User bereits getippt hat
+    c.execute("SELECT 1 FROM tipps WHERE spiel_id = ? AND user_id = ?", (spiel_id, user_id))
+    if c.fetchone():
+        conn.close()
+        await update.message.reply_text(
+            f"⚠️ Du hast für Spiel {spiel_id} bereits einen Tipp abgegeben. Änderungen sind nicht möglich."
+        )
+        return
+
+    # Tipp speichern
     c.execute("""
         INSERT INTO tipps (spiel_id, user_id, username, tore_heim, tore_gast)
         VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(spiel_id, user_id) DO UPDATE SET
-          tore_heim = excluded.tore_heim,
-          tore_gast = excluded.tore_gast
     """, (spiel_id, user_id, username, th, tg))
     conn.commit()
     conn.close()
@@ -231,7 +270,9 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     berechne_punkte(spiel_id)
-    await update.message.reply_text(f"✅ Ergebnis für Spiel {spiel_id} gesetzt: {eh}:{eg} – Punkte berechnet.")
+    await update.message.reply_text(
+        f"✅ Ergebnis für Spiel {spiel_id} gesetzt: {eh}:{eg} – Punkte berechnet."
+    )
 
 async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Zeigt Rangliste aller Tipper (inkl. Streak-Punkte)."""
