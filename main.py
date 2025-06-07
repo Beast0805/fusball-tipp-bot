@@ -13,8 +13,8 @@ from telegram.error import BadRequest, RetryAfter
 CHOOSING_GAME, TYPING_SCORE = range(2)
 
 # Datenbank-Pfad (bei Render z.B. /persistent)
-os.makedirs("/persistent", exist_ok=True)
-DB_PATH = "/persistent/database.db"
++ os.makedirs("/data", exist_ok=True)
++ DB_PATH = "/data/database.db"
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
