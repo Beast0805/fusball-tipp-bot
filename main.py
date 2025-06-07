@@ -37,7 +37,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Helfer: löscht eine Nachricht nach delay Sekunden
+# Helfer: löscht Nachrichten nach delay Sekunden
 async def auto_delete(msg, delay: int):
     await asyncio.sleep(delay)
     try:
@@ -96,7 +96,9 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    reply = await cmd.reply_text(f"✅ Spiel {sid}: {besch} am {dt.strftime('%d.%m.%Y %H:%M')} angelegt.")
+    reply = await cmd.reply_text(
+        f"✅ Spiel {sid}: {besch} am {dt.strftime('%d.%m.%Y %H:%M')} angelegt."
+    )
     asyncio.create_task(auto_delete(reply, 10))
     await cmd.delete()
 
@@ -121,7 +123,7 @@ async def send_reminder(context: CallbackContext):
         )
     )
 
-# /spiele
+# /spiele – schön formatiert
 async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cmd = update.message
     now = datetime.now().isoformat()
@@ -139,14 +141,18 @@ async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(auto_delete(msg, 15))
         return
 
-    text = "📅 *Aktuelle Spiele:*\n" + "\n".join(
-        f"• ID {sid}: {besch} ({datetime.fromisoformat(start).strftime('%d.%m.%Y %H:%M')})"
-        for sid, besch, start in rows
-    )
+    lines = ["📅 *Aktuelle Spiele:*",""]
+    for sid, besch, start in rows:
+        dt = datetime.fromisoformat(start)
+        lines.append(f"• *ID {sid}* — _{besch}_")
+        lines.append(f"   🗓️ {dt.strftime('%d.%m.%Y')}   ⏰ {dt.strftime('%H:%M')}")
+        lines.append("")
+    text = "\n".join(lines)
+
     msg = await cmd.reply_text(text, parse_mode="Markdown")
     asyncio.create_task(auto_delete(msg, 15))
 
-# /tippen (Dialog)
+# /tippen (Dialog) – nur verbleibende, formatiert
 async def start_tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cmd = update.message
     try: await cmd.delete()
@@ -157,14 +163,13 @@ async def start_tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now().isoformat()
 
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    c.execute("SELECT spiel_id, beschreibung FROM spielen WHERE startzeit > ? ORDER BY startzeit", (now,))
+    c.execute("SELECT spiel_id, beschreibung, startzeit FROM spielen WHERE startzeit > ? ORDER BY startzeit", (now,))
     active = c.fetchall()
     c.execute("SELECT spiel_id FROM tipps WHERE user_id = ?", (uid,))
     tipped = {r[0] for r in c.fetchall()}
     conn.close()
 
-    # nur die Spiele, auf die noch nicht getippt wurde
-    remaining = [(sid, desc) for sid, desc in active if sid not in tipped]
+    remaining = [(sid, desc, start) for sid, desc, start in active if sid not in tipped]
     if not remaining:
         notice = await context.bot.send_message(
             chat_id=cmd.chat_id,
@@ -173,12 +178,17 @@ async def start_tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(auto_delete(notice, 5))
         return ConversationHandler.END
 
-    text = f"{user}, auf welches Spiel möchtest du tippen?\n" + "\n".join(
-        f"• {sid}: {besch}" for sid, besch in remaining
-    )
-    prompt = await context.bot.send_message(chat_id=cmd.chat_id, text=text)
+    lines = [f"{user}, auf welches Spiel möchtest du tippen?",""]
+    for sid, besch, start in remaining:
+        dt = datetime.fromisoformat(start)
+        lines.append(f"• *ID {sid}* — _{besch}_")
+        lines.append(f"   🗓️ {dt.strftime('%d.%m.%Y')}   ⏰ {dt.strftime('%H:%M')}")
+        lines.append("")
+    text = "\n".join(lines)
+
+    prompt = await context.bot.send_message(chat_id=cmd.chat_id, text=text, parse_mode="Markdown")
     context.user_data['prompt_msg'] = prompt
-    asyncio.create_task(auto_delete(prompt, 20))
+    asyncio.create_task(auto_delete(prompt, 10))
     return CHOOSING_GAME
 
 async def choose_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -190,7 +200,6 @@ async def choose_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(auto_delete(err, 5))
         return CHOOSING_GAME
 
-    # altes Prompt löschen
     old = context.user_data.pop('prompt_msg', None)
     if old:
         try: await old.delete()
@@ -198,11 +207,12 @@ async def choose_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sid = int(user_msg.text)
     context.user_data['spiel_id'] = sid
-    await user_msg.delete()
+    try: await user_msg.delete()
+    except: pass
 
     prompt = await user_msg.reply_text(f"{user}, wie lautet dein Tipp? Format `2:1`")
     context.user_data['prompt_msg'] = prompt
-    asyncio.create_task(auto_delete(prompt, 20))
+    asyncio.create_task(auto_delete(prompt, 10))
     return TYPING_SCORE
 
 async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -212,7 +222,7 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = user_msg.from_user.id
 
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
-    # 1) Doppel-Tipp prüfen
+    # Doppel-Tipp prüfen
     c.execute("SELECT 1 FROM tipps WHERE spiel_id = ? AND user_id = ?", (sid, uid))
     if c.fetchone():
         notice = await user_msg.reply_text(f"{user}, du hast bereits getippt.")
@@ -221,7 +231,7 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return ConversationHandler.END
 
-    # 2) Zeit-Check
+    # Zeit-Check
     c.execute("SELECT startzeit FROM spielen WHERE spiel_id = ?", (sid,))
     row = c.fetchone()
     conn.close()
@@ -237,7 +247,7 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await old.delete()
         except: pass
 
-    # 3) Format prüfen
+    # Format prüfen
     txt = user_msg.text.strip()
     if ":" not in txt or not all(p.isdigit() for p in txt.split(":",1)):
         err = await user_msg.reply_text(f"{user}, bitte im Format `2:1` tippen.")
@@ -247,7 +257,6 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     heim, gast = map(int, txt.split(":",1))
     username = user_msg.from_user.username or user
 
-    # Tipp speichern
     conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute(
         "INSERT INTO tipps (spiel_id,user_id,username,tore_heim,tore_gast) VALUES (?,?,?,?,?)",
