@@ -14,6 +14,7 @@ DB_PATH = "/data/database.db"
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Tabelle für Spiele
     c.execute("""
     CREATE TABLE IF NOT EXISTS spielen (
         spiel_id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,6 +24,7 @@ def init_db():
         tore_gast    INTEGER
     )
     """)
+    # Tabelle für Tipps
     c.execute("""
     CREATE TABLE IF NOT EXISTS tipps (
         spiel_id   INTEGER NOT NULL,
@@ -34,6 +36,7 @@ def init_db():
         PRIMARY KEY (spiel_id, user_id)
     )
     """)
+    # Tabelle für Streaks
     c.execute("""
     CREATE TABLE IF NOT EXISTS streaks (
         user_id      INTEGER PRIMARY KEY,
@@ -47,6 +50,8 @@ def init_db():
 def berechne_punkte(spiel_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+
+    # Echtes Ergebnis abrufen
     c.execute("SELECT tore_heim, tore_gast FROM spielen WHERE spiel_id = ?", (spiel_id,))
     ergebnis = c.fetchone()
     if not ergebnis or ergebnis[0] is None:
@@ -54,10 +59,12 @@ def berechne_punkte(spiel_id):
         return
     eh, eg = ergebnis
 
+    # Alle Tipps für dieses Spiel laden
     c.execute("SELECT user_id, username, tore_heim, tore_gast FROM tipps WHERE spiel_id = ?", (spiel_id,))
     alle_tipps = c.fetchall()
 
     for user_id, username, th, tg in alle_tipps:
+        # Basis-Punkte
         if th == eh and tg == eg:
             base = 3
         elif (th - tg) * (eh - eg) > 0:
@@ -65,6 +72,7 @@ def berechne_punkte(spiel_id):
         else:
             base = 0
 
+        # Streak abrufen
         c.execute("SELECT streak_count FROM streaks WHERE user_id = ?", (user_id,))
         row = c.fetchone()
         old = row[0] if row else 0
@@ -85,6 +93,7 @@ def berechne_punkte(spiel_id):
             else:
                 c.execute("INSERT INTO streaks (user_id, streak_count) VALUES (?, ?)", (user_id, 0))
 
+        # Punkte aktualisieren
         c.execute(
             "UPDATE tipps SET punkte = ? WHERE spiel_id = ? AND user_id = ?",
             (pts, spiel_id, user_id)
@@ -101,8 +110,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/neuenspiel <Beschreibung> | <YYYY-MM-DD HH:MM> – als Admin ein neues Spiel anlegen\n"
         "/tippen <Spiel-ID> <ToreHeim>:<ToreGast> – Tipp abgeben (vor Spielbeginn)\n"
         "/ergebnis <Spiel-ID> <ToreHeim>:<ToreGast> – als Admin echtes Ergebnis eintragen\n"
-        "/spiele – zeigt alle aktiven Spiele (30 Sekunden sichtbar)\n"
-        "/rangliste – zeigt die Top 20 Tipper (30 Sekunden sichtbar)"
+        "/spiele – zeigt alle aktiven Spiele (30 Sek sichtbar)\n"
+        "/rangliste – zeigt die Top 20 Tipper (30 Sek sichtbar)"
     )
     msg = await update.message.reply_text(txt)
     await asyncio.sleep(5)
@@ -112,7 +121,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest: pass
 
 async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: neues Spiel anlegen"""
+    """Admin: neues Spiel anlegen."""
     try:
         member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
         if member.status not in ("administrator", "creator"):
@@ -175,12 +184,13 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest: pass
 
 async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Zeigt nur zukünftige Spiele (30 Sekunden sichtbar)."""
+    """Nur zukünftige Spiele anzeigen (30 Sekunden)."""
     now = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
-        "SELECT spiel_id, beschreibung, startzeit FROM spielen WHERE startzeit > ? ORDER BY startzeit",
+        "SELECT spiel_id, beschreibung, startzeit FROM spielen "
+        "WHERE startzeit > ? ORDER BY startzeit",
         (now,)
     )
     rows = c.fetchall()
@@ -195,10 +205,16 @@ async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except BadRequest: pass
         return
 
-    text = "📅 **Aktuelle Spiele:**\n"
-    for sid, besch, start in rows:
-        dt = datetime.fromisoformat(start)
-        text += f"ID {sid}: {besch} (Start {dt.strftime('%Y-%m-%d %H:%M')})\n"
+    lines = ["📅 *Aktuelle Spiele:*", ""]
+    for sid, besch, start_iso in rows:
+        dt = datetime.fromisoformat(start_iso)
+        datum = dt.strftime("%d.%m.%Y")
+        uhr = dt.strftime("%H:%M")
+        lines.append(f"• *ID {sid}* — _{besch}_")
+        lines.append(f"   🗓️ {datum}   ⏰ {uhr}")
+        lines.append("")
+
+    text = "\n".join(lines)
     msg = await update.message.reply_text(text, parse_mode="Markdown")
     await asyncio.sleep(30)
     try: await msg.delete()
@@ -297,7 +313,7 @@ async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
-        SELECT username, SUM(punkte) as sum_punkte
+        SELECT username, SUM(punkte) AS sum_punkte
         FROM tipps
         GROUP BY username
         ORDER BY sum_punkte DESC
@@ -315,10 +331,11 @@ async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except BadRequest: pass
         return
 
-    text = "🏆 Rangliste 🏆\n"
+    text = "🏆 **Rangliste** 🏆\n"
     for i, (user, pts) in enumerate(rows, start=1):
-        text += f"{i}. {user}: {pts}\n"
-    msg = await update.message.reply_text(text)
+        text += f"{i}. {user}: {pts} Punkte\n"
+
+    msg = await update.message.reply_text(text, parse_mode="Markdown")
     await asyncio.sleep(30)
     try: await msg.delete()
     except BadRequest: pass
