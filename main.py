@@ -64,7 +64,7 @@ def berechne_punkte(spiel_id):
     alle_tipps = c.fetchall()
 
     for user_id, username, th, tg in alle_tipps:
-        # Basis-Punkte: 3 für exaktes Ergebnis, 1 für richtigen Tendenz, sonst 0
+        # Basis-Punkte: 3 für exaktes Ergebnis, 1 für richtige Tendenz, sonst 0
         if th == eh and tg == eg:
             base_punkte = 3
         elif (th - tg) * (eh - eg) > 0:
@@ -115,45 +115,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     msg = await update.message.reply_text(txt)
     await asyncio.sleep(5)
-    try:
-        await msg.delete()
-    except BadRequest:
-        pass
-    try:
-        await update.message.delete()
-    except BadRequest:
-        pass
+    try: await msg.delete()
+    except BadRequest: pass
+    try: await update.message.delete()
+    except BadRequest: pass
 
 async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin-Befehl: Neues Spiel anlegen."""
+    # Admin-Check
     try:
-        chat_admin = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
-        if chat_admin.status not in ("administrator", "creator"):
+        member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
+        if member.status not in ("administrator", "creator"):
             msg = await update.message.reply_text("❌ Nur Gruppen-Admins dürfen ein neues Spiel anlegen.")
             await asyncio.sleep(5)
-            try:
-                await msg.delete()
-            except BadRequest:
-                pass
-            try:
-                await update.message.delete()
-            except BadRequest:
-                pass
+            try: await msg.delete()
+            except BadRequest: pass
+            try: await update.message.delete()
+            except BadRequest: pass
             return
     except Exception as e:
         msg = await update.message.reply_text(f"⚠️ Fehler beim Admin-Check: {e}")
         await asyncio.sleep(5)
-        try:
-            await msg.delete()
-        except BadRequest:
-            pass
-        try:
-            await update.message.delete()
-        except BadRequest:
-            pass
+        try: await msg.delete()
+        except BadRequest: pass
+        try: await update.message.delete()
+        except BadRequest: pass
         return
 
-    # Befehlstext zerlegen: "/neuenspiel Beschreibung | YYYY-MM-DD HH:MM"
+    # Befehlstext zerlegen
     text = update.message.text.partition(" ")[2]
     if "|" not in text:
         msg = await update.message.reply_text(
@@ -162,20 +151,17 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         await asyncio.sleep(5)
-        try:
-            await msg.delete()
-        except BadRequest:
-            pass
-        try:
-            await update.message.delete()
-        except BadRequest:
-            pass
+        try: await msg.delete()
+        except BadRequest: pass
+        try: await update.message.delete()
+        except BadRequest: pass
         return
 
     beschreibung_part, _, zeit_part = text.partition("|")
     beschreibung = beschreibung_part.strip()
     startzeit_str = zeit_part.strip()
 
+    # Format validieren
     try:
         startzeit = datetime.fromisoformat(startzeit_str)
     except ValueError:
@@ -185,16 +171,13 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         await asyncio.sleep(5)
-        try:
-            await msg.delete()
-        except BadRequest:
-            pass
-        try:
-            await update.message.delete()
-        except BadRequest:
-            pass
+        try: await msg.delete()
+        except BadRequest: pass
+        try: await update.message.delete()
+        except BadRequest: pass
         return
 
+    # Insert in DB
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT INTO spielen (beschreibung, startzeit) VALUES (?, ?)", (beschreibung, startzeit.isoformat()))
@@ -208,10 +191,8 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏰ Startzeit: `{startzeit_str}`",
         parse_mode="Markdown"
     )
-    try:
-        await update.message.delete()
-    except BadRequest:
-        pass
+    try: await update.message.delete()
+    except BadRequest: pass
 
 async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Alle aktiven Spiele anzeigen."""
@@ -228,51 +209,29 @@ async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         msg = await update.message.reply_text("📌 Aktuell sind keine aktiven Spiele.")
         await asyncio.sleep(5)
-        try:
-            await msg.delete()
-        except BadRequest:
-            pass
-        try:
-            await update.message.delete()
-        except BadRequest:
-            pass
+        try: await msg.delete()
+        except BadRequest: pass
+        try: await update.message.delete()
+        except BadRequest: pass
         return
 
     text = "📅 **Aktuelle Spiele:**\n\n"
     for spiel_id, beschreibung, startzeit_iso in rows:
-        startzeit = datetime.fromisoformat(startzeit_iso)
-        text += f"ID {spiel_id}: {beschreibung} (Start: {startzeit.strftime('%Y-%m-%d %H:%M')})\n"
+        start = datetime.fromisoformat(startzeit_iso)
+        text += f"ID {spiel_id}: {beschreibung} (Start: {start.strftime('%Y-%m-%d %H:%M')})\n"
     msg = await update.message.reply_text(text, parse_mode="Markdown")
     await asyncio.sleep(5)
-    try:
-        await msg.delete()
-    except BadRequest:
-        pass
-    try:
-        await update.message.delete()
-    except BadRequest:
-        pass
+    try: await msg.delete()
+    except BadRequest: pass
+    try: await update.message.delete()
+    except BadRequest: pass
 
-async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User-Befehl: Tipp für ein Spiel abgeben."""
-    # (bestehender Code unverändert)
-    ...
-
-async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin-Befehl: Echtes Ergebnis eintragen und Punkte berechnen."""
-    # (bestehender Code unverändert)
-    ...
-
-async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Zeigt Rangliste aller Tipper."""
-    # (bestehender Code unverändert)
-    ...
+# (Handler für /tippen, /ergebnis, /rangliste unverändert)
 
 if __name__ == "__main__":
     init_db()
-    app = ApplicationBuilder().token(os.environ.get("TOKEN")).build()
+    app = ApplicationBuilder().token(os.environ.get('TOKEN')).build()
 
-    # Handler registrieren
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("neuenspiel", neuenspiel, filters=filters.ChatAdministrator()))
     app.add_handler(CommandHandler("spiele", spiele))
@@ -288,6 +247,6 @@ if __name__ == "__main__":
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path=os.environ.get("TOKEN"),
-        webhook_url=f"{WEBHOOK_URL}/{os.environ.get("TOKEN")}"
+        url_path=os.environ.get('TOKEN'),
+        webhook_url=f"{WEBHOOK_URL}/{os.environ.get('TOKEN')}"
     )
