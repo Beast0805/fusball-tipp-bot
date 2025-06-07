@@ -1,30 +1,29 @@
 import os
 import sqlite3
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from telegram.error import BadRequest
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ConversationHandler,
+    MessageHandler, filters, ContextTypes, CallbackContext
+)
 
-# --- 1) Persistenten Ordner anlegen und DB-Pfad setzen ---
+# Conversation states
+CHOOSING_GAME, TYPING_SCORE = range(2)
+
+# Datenbank-Pfad
 os.makedirs("/data", exist_ok=True)
 DB_PATH = "/data/database.db"
 
-# --- 2) Datenbank initialisieren ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Tabelle für Spiele
     c.execute("""
     CREATE TABLE IF NOT EXISTS spielen (
         spiel_id     INTEGER PRIMARY KEY AUTOINCREMENT,
         beschreibung TEXT NOT NULL,
-        startzeit    TEXT NOT NULL,
-        tore_heim    INTEGER,
-        tore_gast    INTEGER
-    )
-    """)
-    # Tabelle für Tipps
+        startzeit    TEXT NOT NULL
+    )""")
     c.execute("""
     CREATE TABLE IF NOT EXISTS tipps (
         spiel_id   INTEGER NOT NULL,
@@ -32,336 +31,163 @@ def init_db():
         username   TEXT NOT NULL,
         tore_heim  INTEGER NOT NULL,
         tore_gast  INTEGER NOT NULL,
-        punkte     INTEGER DEFAULT 0,
         PRIMARY KEY (spiel_id, user_id)
-    )
-    """)
-    # Tabelle für Streaks
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS streaks (
-        user_id      INTEGER PRIMARY KEY,
-        streak_count INTEGER NOT NULL
-    )
-    """)
+    )""")
     conn.commit()
     conn.close()
 
-# --- 3) Punkteberechnung mit Streak-Logik ---
-def berechne_punkte(spiel_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
-    # Echtes Ergebnis abrufen
-    c.execute("SELECT tore_heim, tore_gast FROM spielen WHERE spiel_id = ?", (spiel_id,))
-    ergebnis = c.fetchone()
-    if not ergebnis or ergebnis[0] is None:
-        conn.close()
-        return
-    eh, eg = ergebnis
-
-    # Alle Tipps für dieses Spiel laden
-    c.execute("SELECT user_id, username, tore_heim, tore_gast FROM tipps WHERE spiel_id = ?", (spiel_id,))
-    alle_tipps = c.fetchall()
-
-    for user_id, username, th, tg in alle_tipps:
-        # Basis-Punkte
-        if th == eh and tg == eg:
-            base = 3
-        elif (th - tg) * (eh - eg) > 0:
-            base = 1
-        else:
-            base = 0
-
-        # Streak abrufen
-        c.execute("SELECT streak_count FROM streaks WHERE user_id = ?", (user_id,))
-        row = c.fetchone()
-        old = row[0] if row else 0
-
-        if base > 0:
-            new = old + 1
-            mult = 2 if new >= 3 else 1
-            pts = base * mult
-            if row:
-                c.execute("UPDATE streaks SET streak_count = ? WHERE user_id = ?", (new, user_id))
-            else:
-                c.execute("INSERT INTO streaks (user_id, streak_count) VALUES (?, ?)", (user_id, new))
-        else:
-            new = 0
-            pts = 0
-            if row:
-                c.execute("UPDATE streaks SET streak_count = 0 WHERE user_id = ?", (user_id,))
-            else:
-                c.execute("INSERT INTO streaks (user_id, streak_count) VALUES (?, ?)", (user_id, 0))
-
-        # Punkte aktualisieren
-        c.execute(
-            "UPDATE tipps SET punkte = ? WHERE spiel_id = ? AND user_id = ?",
-            (pts, spiel_id, user_id)
-        )
-
-    conn.commit()
-    conn.close()
-
-# --- 4) Bot-Handler-Funktionen ---
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    txt = (
+    await update.message.reply_text(
         "Willkommen beim Fußball-Tipp-Bot!\n\n"
-        "Befehle:\n"
-        "/neuenspiel <Beschreibung> | <YYYY-MM-DD HH:MM> – als Admin ein neues Spiel anlegen\n"
-        "/tippen <Spiel-ID> <ToreHeim>:<ToreGast> – Tipp abgeben (vor Spielbeginn)\n"
-        "/ergebnis <Spiel-ID> <ToreHeim>:<ToreGast> – als Admin echtes Ergebnis eintragen\n"
-        "/spiele – zeigt alle aktiven Spiele (30 Sek sichtbar)\n"
-        "/rangliste – zeigt die Top 20 Tipper (30 Sek sichtbar)"
+        "/neuenspiel – neues Spiel anlegen (Admins)\n"
+        "/spiele      – aktuelle Partien ansehen\n"
+        "/tippen      – Tipp abgeben (Dialog)\n"
+        "/rangliste   – Top-Tipper"
     )
-    msg = await update.message.reply_text(txt)
-    await asyncio.sleep(5)
-    try: await msg.delete()
-    except BadRequest: pass
-    try: await update.message.delete()
-    except BadRequest: pass
 
+# /neuenspiel (Admins)
 async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: neues Spiel anlegen."""
-    try:
-        member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
-        if member.status not in ("administrator", "creator"):
-            msg = await update.message.reply_text("❌ Nur Admins dürfen neue Spiele anlegen.")
-            await asyncio.sleep(5)
-            try: await msg.delete()
-            except BadRequest: pass
-            try: await update.message.delete()
-            except BadRequest: pass
-            return
-    except Exception as e:
-        msg = await update.message.reply_text(f"⚠️ Admin-Check fehlgeschlagen: {e}")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except BadRequest: pass
-        try: await update.message.delete()
-        except BadRequest: pass
-        return
-
+    member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
+    if member.status not in ("administrator", "creator"):
+        return await update.message.reply_text("❌ Nur Admins dürfen neue Spiele anlegen.")
     text = update.message.text.partition(" ")[2]
     if "|" not in text:
-        msg = await update.message.reply_text(
-            "`/neuenspiel <Beschreibung> | <YYYY-MM-DD HH:MM>`",
-            parse_mode="Markdown"
-        )
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except BadRequest: pass
-        try: await update.message.delete()
-        except BadRequest: pass
-        return
-
-    besch, _, zeit = text.partition("|")
-    besch = besch.strip()
-    zeit = zeit.strip()
-
+        return await update.message.reply_text("📌 Nutze: /neuenspiel Beschreibung | YYYY-MM-DD HH:MM")
+    besch, _, zeit = [p.strip() for p in text.partition("|")]
     try:
-        dt = datetime.fromisoformat(zeit)
+        dt = datetime.strptime(zeit, "%Y-%m-%d %H:%M")
     except ValueError:
-        msg = await update.message.reply_text("❌ Nutze `YYYY-MM-DD HH:MM`", parse_mode="Markdown")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except BadRequest: pass
-        try: await update.message.delete()
-        except BadRequest: pass
-        return
-
+        return await update.message.reply_text("❌ Format: YYYY-MM-DD HH:MM")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT INTO spielen (beschreibung, startzeit) VALUES (?, ?)", (besch, dt.isoformat()))
-    conn.commit()
     sid = c.lastrowid
+    conn.commit()
     conn.close()
-
-    await update.message.reply_text(
-        f"✅ Spiel {sid}: *{besch}* am `{zeit}` angelegt.",
-        parse_mode="Markdown"
+    await update.message.reply_text(f"✅ Spiel {sid}: {besch} am {dt.strftime('%d.%m.%Y %H:%M')} angelegt.")
+    # Reminder 30 Min vorher
+    due = dt - timedelta(minutes=30)
+    context.job_queue.run_once(
+        send_reminder, when=due, chat_id=update.effective_chat.id,
+        name=str(sid),
+        data={'id': sid, 'desc': besch, 'time': dt.strftime('%H:%M')}
     )
-    try: await update.message.delete()
-    except BadRequest: pass
 
+# Reminder callback
+async def send_reminder(context: CallbackContext):
+    data = context.job.data
+    await context.bot.send_message(
+        chat_id=context.job.chat_id,
+        text=f"⏰ Erinnerung: In 30 Min startet Spiel {data['id']}: {data['desc']} um {data['time']} – gebt eure Tipps ab!"
+    )
+
+# /spiele
 async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Nur zukünftige Spiele anzeigen (30 Sekunden)."""
     now = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
         "SELECT spiel_id, beschreibung, startzeit FROM spielen "
-        "WHERE startzeit > ? ORDER BY startzeit",
-        (now,)
+        "WHERE startzeit > ? ORDER BY startzeit", (now,)
     )
     rows = c.fetchall()
     conn.close()
-
     if not rows:
-        msg = await update.message.reply_text("📌 Keine aktiven Spiele.")
-        await asyncio.sleep(30)
-        try: await msg.delete()
-        except BadRequest: pass
-        try: await update.message.delete()
-        except BadRequest: pass
-        return
+        return await update.message.reply_text("📌 Keine aktiven Spiele.")
+    text = "📅 *Aktuelle Spiele:*\n"
+    for sid, besch, start in rows:
+        dt = datetime.fromisoformat(start)
+        text += f"• ID {sid}: {besch} ({dt.strftime('%d.%m.%Y %H:%M')})\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-    lines = ["📅 *Aktuelle Spiele:*", ""]
-    for sid, besch, start_iso in rows:
-        dt = datetime.fromisoformat(start_iso)
-        datum = dt.strftime("%d.%m.%Y")
-        uhr = dt.strftime("%H:%M")
-        lines.append(f"• *ID {sid}* — _{besch}_")
-        lines.append(f"   🗓️ {datum}   ⏰ {uhr}")
-        lines.append("")
-
-    text = "\n".join(lines)
-    msg = await update.message.reply_text(text, parse_mode="Markdown")
-    await asyncio.sleep(30)
-    try: await msg.delete()
-    except BadRequest: pass
-    try: await update.message.delete()
-    except BadRequest: pass
-
-async def tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User tippt ein Ergebnis."""
-    if len(context.args) != 2 or ":" not in context.args[1]:
-        msg = await update.message.reply_text("Usage: /tippen <Spiel-ID> <ToreHeim>:<ToreGast>")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except BadRequest: pass
-        try: await update.message.delete()
-        except BadRequest: pass
-        return
-
-    try:
-        sid = int(context.args[0])
-        th, tg = map(int, context.args[1].split(":"))
-    except:
-        msg = await update.message.reply_text("❌ Falsches Format. Beispiel: /tippen 1 2:1")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except BadRequest: pass
-        try: await update.message.delete()
-        except BadRequest: pass
-        return
-
-    user, uid = update.effective_user.username or update.effective_user.first_name, update.effective_user.id
+# /tippen (Dialog)
+async def start_tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT startzeit FROM spielen WHERE spiel_id = ?", (sid,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        await update.message.reply_text("❌ Spiel existiert nicht.")
-        return
+    c.execute("SELECT spiel_id, beschreibung FROM spielen WHERE startzeit > ? ORDER BY startzeit", (now,))
+    games = c.fetchall()
+    conn.close()
+    if not games:
+        return await update.message.reply_text("📌 Keine Spiele zum Tippen.")
+    text = "Auf welches Spiel möchtest du tippen?\n"
+    for sid, besch in games:
+        text += f"• {sid}: {besch}\n"
+    await update.message.reply_text(text)
+    return CHOOSING_GAME
 
-    start = datetime.fromisoformat(row[0])
-    if datetime.now() >= start:
-        conn.close()
-        await update.message.reply_text("⏰ Tippphase vorbei.")
-        return
+async def choose_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text.isdigit():
+        await update.message.reply_text("❌ Bitte eine Zahl als Spiel-ID eingeben.")
+        return CHOOSING_GAME
+    context.user_data['spiel_id'] = int(update.message.text)
+    await update.message.reply_text("Wie lautet dein Tipp? Format `2:1`")
+    return TYPING_SCORE
 
-    c.execute("SELECT 1 FROM tipps WHERE spiel_id = ? AND user_id = ?", (sid, uid))
-    if c.fetchone():
-        conn.close()
-        await update.message.reply_text("⚠️ Du hast bereits getippt.")
-        return
-
+async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if ":" not in text:
+        await update.message.reply_text("❌ Format bitte `H:G`, z.B. `2:1`")
+        return TYPING_SCORE
+    home, away = text.split(":", 1)
+    if not (home.isdigit() and away.isdigit()):
+        await update.message.reply_text("❌ Beide Teile müssen Zahlen sein.")
+        return TYPING_SCORE
+    sid = context.user_data['spiel_id']
+    uid = update.effective_user.id
+    user = update.effective_user.username or update.effective_user.first_name
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
     c.execute(
-        "INSERT INTO tipps (spiel_id, user_id, username, tore_heim, tore_gast) VALUES (?,?,?,?,?)",
-        (sid, uid, user, th, tg)
+        "INSERT OR REPLACE INTO tipps (spiel_id, user_id, username, tore_heim, tore_gast) VALUES (?,?,?,?,?)",
+        (sid, uid, user, int(home), int(away))
     )
     conn.commit()
     conn.close()
-    await update.message.reply_text(f"✅ Dein Tipp für Spiel {sid}: {th}:{tg}")
-    try: await update.message.delete()
-    except BadRequest: pass
+    await update.message.reply_text(f"{user}, vielen Dank für deinen Tipp {home}:{away}! Viel Glück!")
+    return ConversationHandler.END
 
-async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin trägt echt Ergebnis ein."""
-    try:
-        member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
-        if member.status not in ("administrator", "creator"):
-            await update.message.reply_text("❌ Nur Admins dürfen das Ergebnis setzen.")
-            return
-    except:
-        await update.message.reply_text("⚠️ Admin-Check fehlgeschlagen.")
-        return
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Tippen abgebrochen. Mit /tippen neu starten.")
+    return ConversationHandler.END
 
-    if len(context.args) != 2 or ":" not in context.args[1]:
-        await update.message.reply_text("Usage: /ergebnis <Spiel-ID> <Heim>:<Gast>")
-        return
-
-    try:
-        sid = int(context.args[0])
-        eh, eg = map(int, context.args[1].split(":"))
-    except:
-        await update.message.reply_text("❌ Falsches Format. Beispiel: /ergebnis 1 2:1")
-        return
-
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE spielen SET tore_heim=?, tore_gast=? WHERE spiel_id=?", (eh, eg, sid))
-    conn.commit()
-    conn.close()
-
-    berechne_punkte(sid)
-    await update.message.reply_text(f"✅ Ergebnis Spiel {sid}: {eh}:{eg} – Punkte berechnet.")
-
+# /rangliste
 async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Zeigt Top 20 Tipper (30 Sekunden)."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
-        SELECT username, SUM(punkte) AS sum_punkte
-        FROM tipps
-        GROUP BY username
-        ORDER BY sum_punkte DESC
-        LIMIT 20
+        SELECT username, COUNT(*) as punkte 
+        FROM tipps GROUP BY username 
+        ORDER BY punkte DESC LIMIT 20
     """)
     rows = c.fetchall()
     conn.close()
-
-    if not rows:
-        msg = await update.message.reply_text("Noch keine Tipps.")
-        await asyncio.sleep(30)
-        try: await msg.delete()
-        except BadRequest: pass
-        try: await update.message.delete()
-        except BadRequest: pass
-        return
-
-    text = "🏆 **Rangliste** 🏆\n"
+    text = "🏆 Rangliste 🏆\n"
     for i, (user, pts) in enumerate(rows, start=1):
-        text += f"{i}. {user}: {pts} Punkte\n"
+        text += f"{i}. {user}: {pts}\n"
+    await update.message.reply_text(text)
 
-    msg = await update.message.reply_text(text, parse_mode="Markdown")
-    await asyncio.sleep(30)
-    try: await msg.delete()
-    except BadRequest: pass
-    try: await update.message.delete()
-    except BadRequest: pass
-
-# --- 5) Bot starten ---
+# Main
 if __name__ == "__main__":
     init_db()
-    app = ApplicationBuilder().token(os.environ.get('TOKEN')).build()
+    app = ApplicationBuilder().token(os.environ["TOKEN"]).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("neuenspiel", neuenspiel))
     app.add_handler(CommandHandler("spiele", spiele))
-    app.add_handler(CommandHandler("tippen", tippen))
-    app.add_handler(CommandHandler("ergebnis", ergebnis))
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CommandHandler("tippen", start_tippen)],
+            states={
+                CHOOSING_GAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_game)],
+                TYPING_SCORE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_score)],
+            },
+            fallbacks=[CommandHandler("abbrechen", cancel)],
+            per_user=True,
+            per_chat=True
+        )
+    )
     app.add_handler(CommandHandler("rangliste", rangliste))
 
-    WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
-    if not WEBHOOK_URL:
-        raise RuntimeError("ENV VAR 'RENDER_EXTERNAL_URL' fehlt!")
-
-    PORT = int(os.environ.get("PORT", "8443"))
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=os.environ.get('TOKEN'),
-        webhook_url=f"{WEBHOOK_URL}/{os.environ.get('TOKEN')}"
-    )
+    app.run_polling()
