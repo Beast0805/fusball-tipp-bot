@@ -87,14 +87,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text)
     asyncio.create_task(auto_delete(msg, 8))
-    try: await update.message.delete() 
+    try: await update.message.delete()
     except: pass
 
 
 # /neuenspiel (Admin + Dublettencheck)
 async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cmd = update.message
-    # Admin-Only
     try:
         member = await context.bot.get_chat_member(cmd.chat_id, cmd.from_user.id)
         if member.status not in ("administrator", "creator"):
@@ -104,7 +103,6 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cmd.delete()
         return
 
-    # Syntax: /neuenspiel Beschreibung | YYYY-MM-DD HH:MM
     text = cmd.text.partition(" ")[2]
     if "|" not in text:
         err = await context.bot.send_message(
@@ -112,7 +110,7 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="📌 Nutze: /neuenspiel Beschreibung | YYYY-MM-DD HH:MM"
         )
         asyncio.create_task(auto_delete(err, 10))
-        try: await cmd.delete() 
+        try: await cmd.delete()
         except: pass
         return
 
@@ -125,13 +123,12 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="❌ Datum/Uhrzeit im Format YYYY-MM-DD HH:MM"
         )
         asyncio.create_task(auto_delete(err, 10))
-        try: await cmd.delete() 
+        try: await cmd.delete()
         except: pass
         return
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Dublettencheck
     c.execute(
         "SELECT 1 FROM spielen WHERE beschreibung=? AND startzeit=?",
         (besch, dt.isoformat())
@@ -147,7 +144,6 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
         return
 
-    # Insert
     c.execute(
         "INSERT INTO spielen (beschreibung, startzeit) VALUES (?, ?)",
         (besch, dt.isoformat())
@@ -165,7 +161,6 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await cmd.delete()
     except: pass
 
-    # Job: Erinnerung 30 Min vor Anpfiff
     due = dt - timedelta(minutes=30)
     context.job_queue.run_once(
         send_reminder,
@@ -308,7 +303,6 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Doppel-Tipp prüfen
     c.execute("SELECT 1 FROM tipps WHERE spiel_id = ? AND user_id = ?", (sid, uid))
     if c.fetchone():
         notice = await context.bot.send_message(
@@ -320,7 +314,6 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return ConversationHandler.END
 
-    # Zeit-Check
     c.execute("SELECT startzeit FROM spielen WHERE spiel_id = ?", (sid,))
     row = c.fetchone()
     conn.close()
@@ -377,10 +370,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# /ergebnis <ID> <H:G> – nur Admin, Wert setzt Ergebnis & Punkte
+# /ergebnis <ID> <H:G> – Admin trägt Ergebnis ein und verteilt Punkte
 async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cmd = update.message
-    # Admin-Check
     try:
         m = await context.bot.get_chat_member(cmd.chat_id, cmd.from_user.id)
         if m.status not in ("administrator", "creator"):
@@ -395,7 +387,7 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="📌 Nutze: /ergebnis <Spiel-ID> <ToreHeim>:<ToreGast>"
         )
         asyncio.create_task(auto_delete(err,10))
-        try: await cmd.delete() 
+        try: await cmd.delete()
         except: pass
         return
 
@@ -403,7 +395,7 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not sid_str.isdigit():
         err = await context.bot.send_message(chat_id=cmd.chat_id, text="❌ Ungültige Spiel-ID.")
         asyncio.create_task(auto_delete(err,10))
-        try: await cmd.delete() 
+        try: await cmd.delete()
         except: pass
         return
 
@@ -412,7 +404,7 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (home_str.isdigit() and away_str.isdigit()):
         err = await context.bot.send_message(chat_id=cmd.chat_id, text="❌ Score im Format 2:1.")
         asyncio.create_task(auto_delete(err,10))
-        try: await cmd.delete() 
+        try: await cmd.delete()
         except: pass
         return
 
@@ -420,23 +412,20 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Spiel existiert?
     c.execute("SELECT 1 FROM spielen WHERE spiel_id = ?", (sid,))
     if not c.fetchone():
         err = await context.bot.send_message(chat_id=cmd.chat_id, text="❌ Spiel nicht gefunden.")
         asyncio.create_task(auto_delete(err,10))
         conn.close()
-        try: await cmd.delete() 
+        try: await cmd.delete()
         except: pass
         return
 
-    # Ergebnis speichern
     c.execute(
         "INSERT OR REPLACE INTO ergebnisse (spiel_id,tore_heim,tore_gast) VALUES (?,?,?)",
         (sid, home, away)
     )
 
-    # Punkte berechnen & speichern
     c.execute(
         "SELECT user_id,username,tore_heim,tore_gast FROM tipps WHERE spiel_id = ?", (sid,)
     )
@@ -447,7 +436,6 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             actual_diff = home - away
             tip_diff    = heim_tip - gast_tip
-            # gleiche Tendenz?
             if (actual_diff > 0 and tip_diff > 0) or \
                (actual_diff == 0 and tip_diff == 0) or \
                (actual_diff < 0 and tip_diff < 0):
@@ -471,40 +459,37 @@ async def ergebnis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
 
-# /loeschenspiel <ID> – Admin löscht Spiel + zugehörige Einträge
+# /loeschenspiel <ID> – Admin löscht Spiel + alle Einträge (robust)
 async def loeschenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cmd = update.message
     try:
         m = await context.bot.get_chat_member(cmd.chat_id, cmd.from_user.id)
         if m.status not in ("administrator", "creator"):
-            await cmd.delete(); return
+            await cmd.delete()
+            return
     except:
-        await cmd.delete(); return
+        await cmd.delete()
+        return
 
     parts = cmd.text.split(maxsplit=1)
     if len(parts) != 2 or not parts[1].isdigit():
-        err = await context.bot.send_message(
-            chat_id=cmd.chat_id,
-            text="📌 Nutze: /loeschenspiel <Spiel-ID>"
-        )
+        err = await context.bot.send_message(cmd.chat_id, "📌 Nutze: /loeschenspiel <Spiel-ID>")
         asyncio.create_task(auto_delete(err,10))
-        try: await cmd.delete()
-        except: pass
+        await cmd.delete()
         return
 
     sid = int(parts[1])
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT 1 FROM spielen WHERE spiel_id = ?", (sid,))
-    if not c.fetchone():
-        err = await context.bot.send_message(chat_id=cmd.chat_id, text="❌ Spiel nicht gefunden.")
-        asyncio.create_task(auto_delete(err,10))
+
+    c.execute("SELECT COUNT(*) FROM spielen WHERE spiel_id = ?", (sid,))
+    (exists,) = c.fetchone()
+    if exists == 0:
+        await context.bot.send_message(cmd.chat_id, "❌ Spiel nicht gefunden.")
         conn.close()
-        try: await cmd.delete()
-        except: pass
+        await cmd.delete()
         return
 
-    # alles löschen
     c.execute("DELETE FROM tipps     WHERE spiel_id = ?", (sid,))
     c.execute("DELETE FROM punkte    WHERE spiel_id = ?", (sid,))
     c.execute("DELETE FROM ergebnisse WHERE spiel_id = ?", (sid,))
@@ -513,15 +498,14 @@ async def loeschenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     reply = await context.bot.send_message(
-        chat_id=cmd.chat_id,
-        text=f"🗑️ Spiel {sid} und alle zugehörigen Einträge gelöscht."
+        cmd.chat_id,
+        f"🗑️ {exists} Spiel(e) mit ID {sid} und alle zugehörigen Einträge gelöscht."
     )
     asyncio.create_task(auto_delete(reply,10))
-    try: await cmd.delete()
-    except: pass
+    await cmd.delete()
 
 
-# /rangliste – zieht aus punkte-Tabelle
+# /rangliste
 async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cmd = update.message
     conn = sqlite3.connect(DB_PATH)
