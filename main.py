@@ -3,7 +3,7 @@ import sqlite3
 import asyncio
 from datetime import datetime
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.error import BadRequest
 
 # --- 1) Persistenten Ordner anlegen und DB-Pfad setzen ---
@@ -56,7 +56,7 @@ def berechne_punkte(spiel_id):
     ergebnis = c.fetchone()
     if not ergebnis or ergebnis[0] is None:
         conn.close()
-        return  # Noch kein Ergebnis eingetragen
+        return
     eh, eg = ergebnis
 
     # Alle Tipps für dieses Spiel laden
@@ -64,7 +64,6 @@ def berechne_punkte(spiel_id):
     alle_tipps = c.fetchall()
 
     for user_id, username, th, tg in alle_tipps:
-        # Basis-Punkte: 3 für exaktes Ergebnis, 1 für richtige Tendenz, sonst 0
         if th == eh and tg == eg:
             base_punkte = 3
         elif (th - tg) * (eh - eg) > 0:
@@ -72,7 +71,7 @@ def berechne_punkte(spiel_id):
         else:
             base_punkte = 0
 
-        # Aktuellen Streak abrufen (falls vorhanden)
+        # Streak abrufen
         c.execute("SELECT streak_count FROM streaks WHERE user_id = ?", (user_id,))
         row = c.fetchone()
         old_streak = row[0] if row else 0
@@ -93,7 +92,7 @@ def berechne_punkte(spiel_id):
             else:
                 c.execute("INSERT INTO streaks (user_id, streak_count) VALUES (?, ?)", (user_id, 0))
 
-        # Punkte ins Tipp-Table aktualisieren
+        # Punkte aktualisieren
         c.execute("""
             UPDATE tipps SET punkte = ?
             WHERE spiel_id = ? AND user_id = ?
@@ -110,8 +109,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/neuenspiel <Beschreibung> | <YYYY-MM-DD HH:MM> – als Admin ein neues Spiel anlegen\n"
         "/tippen <Spiel-ID> <ToreHeim>:<ToreGast> – Tipp abgeben (nur 1 Tipp pro Spiel, vor Startzeit)\n"
         "/ergebnis <Spiel-ID> <ToreHeim>:<ToreGast> – als Admin echtes Ergebnis eintragen\n"
-        "/spiele – zeigt alle aktiven Spiele mit ID und Beschreibung\n"
-        "/rangliste – zeige aktuelle Rangliste aller Tipper"
+        "/spiele – zeigt alle aktiven Spiele mit ID und Beschreibung (30 Sekunden sichtbar)\n"
+        "/rangliste – zeige aktuelle Rangliste aller Tipper (30 Sekunden sichtbar)"
     )
     msg = await update.message.reply_text(txt)
     await asyncio.sleep(5)
@@ -142,7 +141,7 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except BadRequest: pass
         return
 
-    # Befehlstext zerlegen
+    # Text zerlegen
     text = update.message.text.partition(" ")[2]
     if "|" not in text:
         msg = await update.message.reply_text(
@@ -177,7 +176,7 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except BadRequest: pass
         return
 
-    # Insert in DB
+    # Insert
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT INTO spielen (beschreibung, startzeit) VALUES (?, ?)", (beschreibung, startzeit.isoformat()))
@@ -195,7 +194,7 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest: pass
 
 async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Alle aktiven Spiele anzeigen."""
+    """Alle aktiven Spiele anzeigen (30 Sekunden)."""
     now_iso = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -208,7 +207,7 @@ async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not rows:
         msg = await update.message.reply_text("📌 Aktuell sind keine aktiven Spiele.")
-        await asyncio.sleep(5)
+        await asyncio.sleep(30)
         try: await msg.delete()
         except BadRequest: pass
         try: await update.message.delete()
@@ -220,20 +219,20 @@ async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
         start = datetime.fromisoformat(startzeit_iso)
         text += f"ID {spiel_id}: {beschreibung} (Start: {start.strftime('%Y-%m-%d %H:%M')})\n"
     msg = await update.message.reply_text(text, parse_mode="Markdown")
-    await asyncio.sleep(5)
+    await asyncio.sleep(30)                # ← hier 30 Sekunden
     try: await msg.delete()
     except BadRequest: pass
     try: await update.message.delete()
     except BadRequest: pass
 
-# (Handler für /tippen, /ergebnis, /rangliste unverändert)
+# (tippen, ergebnis, rangliste bleiben unverändert, rangliste hat bereits 30 Sekunden Sleep)
 
 if __name__ == "__main__":
     init_db()
     app = ApplicationBuilder().token(os.environ.get('TOKEN')).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("neuenspiel", neuenspiel, filters=filters.ChatAdministrator()))
+    app.add_handler(CommandHandler("neuenspiel", neuenspiel))   # Filter entfernt
     app.add_handler(CommandHandler("spiele", spiele))
     app.add_handler(CommandHandler("tippen", tippen))
     app.add_handler(CommandHandler("ergebnis", ergebnis))
