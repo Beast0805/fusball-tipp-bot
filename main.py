@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-# Conversation-States
+# Conversation states
 CHOOSING_GAME, TYPING_SCORE = range(2)
 
 # Datenbank-Pfad
@@ -37,13 +37,11 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Helfer zum verzögerten Löschen
+# Helfer: löscht eine Nachricht nach delay Sekunden
 async def auto_delete(msg, delay: int):
     await asyncio.sleep(delay)
-    try:
-        await msg.delete()
-    except BadRequest:
-        pass
+    try: await msg.delete()
+    except BadRequest: pass
 
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -58,27 +56,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await msg.delete()
         await update.message.delete()
-    except:
-        pass
+    except: pass
 
 # /neuenspiel (Admins)
 async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        member = await context.bot.get_chat_member(
-            update.effective_chat.id, update.effective_user.id
-        )
-        if member.status not in ("administrator", "creator"):
-            await update.message.delete()
-            return
-    except:
+    # Admin-Check
+    member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
+    if member.status not in ("administrator", "creator"):
         await update.message.delete()
         return
 
     text = update.message.text.partition(" ")[2]
     if "|" not in text:
-        msg = await update.message.reply_text(
-            "📌 Nutze: /neuenspiel Beschreibung | YYYY-MM-DD HH:MM"
-        )
+        msg = await update.message.reply_text("📌 Nutze: /neuenspiel Beschreibung | YYYY-MM-DD HH:MM")
         asyncio.create_task(auto_delete(msg, 10))
         await update.message.delete()
         return
@@ -94,10 +84,7 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute(
-        "INSERT INTO spielen (beschreibung, startzeit) VALUES (?, ?)",
-        (besch, dt.isoformat())
-    )
+    c.execute("INSERT INTO spielen (beschreibung, startzeit) VALUES (?, ?)", (besch, dt.isoformat()))
     sid = c.lastrowid
     conn.commit()
     conn.close()
@@ -108,11 +95,10 @@ async def neuenspiel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(auto_delete(reply, 10))
     await update.message.delete()
 
-    # Reminder 30 Minuten vor Anstoß
+    # Reminder 30 Minuten vor Anpfiff
     due = dt - timedelta(minutes=30)
     context.job_queue.run_once(
-        send_reminder,
-        when=due,
+        send_reminder, when=due,
         chat_id=update.effective_chat.id,
         name=str(sid),
         data={'id': sid, 'desc': besch, 'time': dt.strftime('%H:%M')}
@@ -123,74 +109,63 @@ async def send_reminder(context: CallbackContext):
     d = context.job.data
     await context.bot.send_message(
         chat_id=context.job.chat_id,
-        text=(
-            f"⏰ Erinnerung: In 30 Min startet Spiel {d['id']}: "
-            f"{d['desc']} um {d['time']} – tippt jetzt!"
-        )
+        text=(f"⏰ Erinnerung: In 30 Min startet Spiel {d['id']}: "
+              f"{d['desc']} um {d['time']} – gebt eure Tipps ab!")
     )
 
-# /spiele
+# /spiele (schönes Layout & Ephemeral)
 async def spiele(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Slash-Kommando löschen
+    try: await update.message.delete()
+    except: pass
+
     now = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
         "SELECT spiel_id, beschreibung, startzeit FROM spielen "
-        "WHERE startzeit > ? ORDER BY startzeit",
-        (now,)
+        "WHERE startzeit > ? ORDER BY startzeit", (now,)
     )
     rows = c.fetchall()
     conn.close()
 
-    await update.message.delete()
     if not rows:
-        msg = await update.message.reply_text("📌 Keine aktiven Spiele.")
+        msg = await context.bot.send_message(chat_id=update.effective_chat.id, text="📌 Keine aktiven Spiele.")
         asyncio.create_task(auto_delete(msg, 15))
         return
 
-    text = "📅 *Aktuelle Spiele:*\n" + "\n".join(
-        f"• ID {sid}: {besch} ({datetime.fromisoformat(start).strftime('%d.%m.%Y %H:%M')})"
-        for sid, besch, start in rows
-    )
-    msg = await update.message.reply_text(text, parse_mode="Markdown")
+    lines = ["📅 *Aktuelle Spiele:*\n"]
+    for sid, besch, start in rows:
+        dt = datetime.fromisoformat(start)
+        datum = dt.strftime("%d.%m.%Y")
+        uhr   = dt.strftime("%H:%M")
+        lines.append(f"• *ID {sid}* — _{besch}_")
+        lines.append(f"   🗓️ {datum}   ⏰ {uhr}")
+        lines.append("")  # Leerzeile
+
+    text = "\n".join(lines)
+    msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="Markdown")
     asyncio.create_task(auto_delete(msg, 15))
 
 # /tippen (Dialog)
 async def start_tippen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Slash-Kommando löschen
     try: await update.message.delete()
     except: pass
 
-    uid = update.effective_user.id
     now = datetime.now().isoformat()
-
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # alle aktiven Spiele
-    c.execute(
-        "SELECT spiel_id, beschreibung FROM spielen WHERE startzeit > ? ORDER BY startzeit",
-        (now,)
-    )
-    active = c.fetchall()
-    # bereits getippte Spiele
-    c.execute(
-        "SELECT spiel_id FROM tipps WHERE user_id = ?", (uid,)
-    )
-    tipped = {row[0] for row in c.fetchall()}
+    c.execute("SELECT spiel_id, beschreibung FROM spielen WHERE startzeit > ? ORDER BY startzeit", (now,))
+    games = c.fetchall()
     conn.close()
 
-    # verbleibende Spiele
-    remaining = [(sid, desc) for sid, desc in active if sid not in tipped]
-
-    if not remaining:
-        notice = await update.message.reply_text(
-            "⚠️ Du hast bereits auf alle aktiven Spiele getippt. Viel Glück!"
-        )
-        asyncio.create_task(auto_delete(notice, 5))
+    if not games:
+        msg = await context.bot.send_message(chat_id=update.effective_chat.id, text="📌 Keine Spiele zum Tippen.")
+        asyncio.create_task(auto_delete(msg, 15))
         return ConversationHandler.END
 
-    text = "Auf welches Spiel möchtest du tippen?\n" + "\n".join(
-        f"• {sid}: {besch}" for sid, besch in remaining
-    )
+    text = "Auf welches Spiel möchtest du tippen?\n" + "\n".join(f"• {sid}: {besch}" for sid, besch in games)
     prompt = await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
     context.user_data['prompt_msg'] = prompt
     asyncio.create_task(auto_delete(prompt, 20))
@@ -203,6 +178,7 @@ async def choose_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(auto_delete(err, 20))
         return CHOOSING_GAME
 
+    # altes Prompt löschen
     old = context.user_data.pop('prompt_msg', None)
     if old:
         try: await old.delete()
@@ -213,7 +189,7 @@ async def choose_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await user_msg.delete()
     except: pass
 
-    prompt = await user_msg.reply_text("Wie lautet dein Tipp? Format `2:1`")
+    prompt = await context.bot.send_message(chat_id=update.effective_chat.id, text="Wie lautet dein Tipp? Format `2:1`")
     context.user_data['prompt_msg'] = prompt
     asyncio.create_task(auto_delete(prompt, 20))
     return TYPING_SCORE
@@ -223,13 +199,9 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sid = context.user_data['spiel_id']
     uid = user_msg.from_user.id
 
-    # Doppel-Tipp verhindern
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT 1 FROM tipps WHERE spiel_id = ? AND user_id = ?",
-        (sid, uid)
-    )
+    # 1) Doppel-Tipp verhindern
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+    c.execute("SELECT 1 FROM tipps WHERE spiel_id = ? AND user_id = ?", (sid, uid))
     if c.fetchone():
         notice = await user_msg.reply_text("⚠️ Du hast bereits getippt.")
         asyncio.create_task(auto_delete(notice, 5))
@@ -238,28 +210,25 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return ConversationHandler.END
 
-    # Zeit-Check
-    c.execute(
-        "SELECT startzeit FROM spielen WHERE spiel_id = ?",
-        (sid,)
-    )
+    # 2) Zeit-Check
+    c.execute("SELECT startzeit FROM spielen WHERE spiel_id = ?", (sid,))
     row = c.fetchone()
     conn.close()
     if not row:
         err = await user_msg.reply_text("❌ Ungültige Spiel-ID.")
-        asyncio.create_task(auto_delete(err, 10))
+        asyncio.create_task(auto_delete(err, 5))
         try: await user_msg.delete()
         except: pass
         return ConversationHandler.END
 
     if datetime.now() >= datetime.fromisoformat(row[0]):
         notice = await user_msg.reply_text("⏰ Tippphase vorbei.")
-        asyncio.create_task(auto_delete(notice, 10))
+        asyncio.create_task(auto_delete(notice, 5))
         try: await user_msg.delete()
         except: pass
         return ConversationHandler.END
 
-    # Format prüfen
+    # 3) Format-Prüfung
     text = user_msg.text.strip()
     if ":" not in text or not all(p.isdigit() for p in text.split(":",1)):
         err = await user_msg.reply_text("❌ Format bitte `2:1`.")
@@ -269,8 +238,8 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     heim, gast = map(int, text.split(":",1))
     user = user_msg.from_user.username or user_msg.from_user.first_name
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    # Tipp speichern
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute(
         "INSERT INTO tipps (spiel_id,user_id,username,tore_heim,tore_gast) VALUES (?,?,?,?,?)",
         (sid, uid, user, heim, gast)
@@ -278,14 +247,13 @@ async def receive_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
+    # altes Prompt löschen
     old = context.user_data.pop('prompt_msg', None)
     if old:
         try: await old.delete()
         except: pass
 
-    thanks = await user_msg.reply_text(
-        f"{user}, danke für deinen Tipp {heim}:{gast}! Viel Glück!"
-    )
+    thanks = await user_msg.reply_text(f"{user}, danke für deinen Tipp {heim}:{gast}! Viel Glück!")
     asyncio.create_task(auto_delete(thanks, 5))
     try: await user_msg.delete()
     except: pass
@@ -300,28 +268,24 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # /rangliste
 async def rangliste(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn = sqlite3.connect(DB_PATH); c = conn.cursor()
     c.execute("""
         SELECT username, COUNT(*) as punkte
-        FROM tipps GROUP BY username
+        FROM tipps GROUP BY username 
         ORDER BY punkte DESC LIMIT 20
     """)
     rows = c.fetchall()
     conn.close()
-
     try: await update.message.delete()
     except: pass
 
     if not rows:
-        msg = await update.message.reply_text("Noch keine Tipps.")
+        msg = await context.bot.send_message(chat_id=update.effective_chat.id, text="Noch keine Tipps.")
         asyncio.create_task(auto_delete(msg, 30))
         return
 
-    text = "🏆 *Rangliste* 🏆\n" + "\n".join(
-        f"{i+1}. {u}: {p}" for i,(u,p) in enumerate(rows)
-    )
-    msg = await update.message.reply_text(text, parse_mode="Markdown")
+    text = "🏆 *Rangliste* 🏆\n" + "\n".join(f"{i+1}. {u}: {p}" for i,(u,p) in enumerate(rows))
+    msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="Markdown")
     asyncio.create_task(auto_delete(msg, 30))
 
 # Main
@@ -337,7 +301,7 @@ if __name__ == "__main__":
             entry_points=[CommandHandler("tippen", start_tippen)],
             states={
                 CHOOSING_GAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_game)],
-                TYPING_SCORE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_score)],
+                TYPING_SCORE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_score)],
             },
             fallbacks=[CommandHandler("abbrechen", cancel)],
             per_user=True,
@@ -346,6 +310,7 @@ if __name__ == "__main__":
     )
     app.add_handler(CommandHandler("rangliste", rangliste))
 
+    # Webhook-Setup für Render
     WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
     PORT        = int(os.environ.get("PORT", "8443"))
     app.run_webhook(
