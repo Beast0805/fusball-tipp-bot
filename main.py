@@ -1,4 +1,3 @@
-```python
 import os
 import sys
 import sqlite3
@@ -92,7 +91,6 @@ async def auto_delete(msg, delay: int):
 async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     chat_id = update.effective_chat.id
-    # Bot-Activity anzeigen
     await context.bot.send_chat_action(chat_id, action="typing")
     try:
         resp = openai.ChatCompletion.create(
@@ -110,9 +108,7 @@ async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Main
 if __name__ == "__main__":
-    # DB initialisieren
     init_db()
-    # Bot-Instanz bauen
     app = ApplicationBuilder().token(telegram_token).build()
 
     # Hier deine bestehenden CommandHandler einfügen:
@@ -120,17 +116,17 @@ if __name__ == "__main__":
     # app.add_handler(CommandHandler("neuenspiel", neuenspiel))
     # ...
 
-    # ChatGPT-Handler zum Schluss registrieren
+    # ChatGPT-Handler registrieren
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler)
     )
 
     # Lokal testen
     app.run_polling()
-    # Für Produktion mit Webhook stattdessen:
+    # Für Produktion mit Webhook:
     # app.run_webhook(
     #     listen="0.0.0.0",
-    #     port=int(os.environ.get("PORT", 8443)),
+    #     port=int(os.environ.get("PORT",8643)),
     #     url_path=telegram_token,
     #     webhook_url=f"https://<dein-host>/{telegram_token}"
     # )
