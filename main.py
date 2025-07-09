@@ -1,4 +1,3 @@
-```python
 import os
 import sqlite3
 import asyncio
@@ -15,10 +14,10 @@ from telegram.ext import (
 from telegram.error import BadRequest, RetryAfter
 
 # Logging konfigurieren
-tlogging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 # OpenAI API-Key aus Umgebungsvariablen
-oopenai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
     logging.error("OPENAI_API_KEY ist nicht gesetzt!")
 
@@ -85,11 +84,11 @@ async def auto_delete(msg, delay: int):
         except Exception as ex:
             logging.warning(f"Retry delete failed: {ex}")
 
-# ChatGPT-Handler: alle Nicht-Commands gehen hierhin
+# ChatGPT-Handler: alle Nicht-Commands landen hier
 async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     chat_id = update.effective_chat.id
-    # Bot Activity anzeigen
+    # Bot-Activity anzeigen
     await context.bot.send_chat_action(chat_id, action="typing")
     try:
         resp = openai.ChatCompletion.create(
@@ -107,29 +106,27 @@ async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Main
 if __name__ == "__main__":
-    # DB & Bot starten
+    # DB initialisieren
     init_db()
+    # Bot-Instanz bauen
     app = ApplicationBuilder().token(telegram_token).build()
 
-    # Deine bestehenden CommandHandler hier registrieren, z.B.:
+    # Hier deine bestehenden CommandHandler einfügen:
     # app.add_handler(CommandHandler("start", start))
     # app.add_handler(CommandHandler("neuenspiel", neuenspiel))
     # ...
 
-    # Am Ende: ChatGPT-Handler
+    # ChatGPT-Handler zum Schluss registrieren
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler)
     )
 
-    # Polling oder Webhook
-    # Für lokalen Test:
+    # Lokal testen
     app.run_polling()
-    # Für Deployment mit Webhook:
-    # app.run_webhook(listen="0.0.0.0", port=int(os.environ.get("PORT", 8443)), 
-    #                 url_path=telegram_token, webhook_url=f"https://<dein-host>/{telegram_token}")
-```
-
-**Anleitung:**
-1. Setze in Render oder deiner Shell die Environment-Variablen `TELEGRAM_TOKEN` und `OPENAI_API_KEY`.
-2. Ersetze in den `app.add_handler(CommandHandler(...))`-Zeilen deine Tipp-Befehle.
-3. Push & redeploy – jetzt chattet dein Bot via ChatGPT!
+    # Für Produktion mit Webhook stattdessen:
+    # app.run_webhook(
+    #     listen="0.0.0.0",
+    #     port=int(os.environ.get("PORT", 8443)),
+    #     url_path=telegram_token,
+    #     webhook_url=f"https://<dein-host>/{telegram_token}"
+    # )
