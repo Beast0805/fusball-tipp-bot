@@ -1,4 +1,6 @@
+```python
 import os
+import sys
 import sqlite3
 import asyncio
 import logging
@@ -20,11 +22,13 @@ logging.basicConfig(level=logging.INFO)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
     logging.error("OPENAI_API_KEY ist nicht gesetzt!")
+    sys.exit(1)
 
-# Telegram-Token
+# Telegram-Token aus Umgebungsvariablen
 telegram_token = os.getenv("TELEGRAM_TOKEN")
 if not telegram_token:
     logging.error("TELEGRAM_TOKEN ist nicht gesetzt!")
+    sys.exit(1)
 
 # Zeitzone und DB-Pfad
 TZ = ZoneInfo("Europe/Berlin")
@@ -130,3 +134,4 @@ if __name__ == "__main__":
     #     url_path=telegram_token,
     #     webhook_url=f"https://<dein-host>/{telegram_token}"
     # )
+```
