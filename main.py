@@ -8,10 +8,7 @@ from zoneinfo import ZoneInfo
 
 import openai
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ConversationHandler, filters, ContextTypes
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.error import BadRequest, RetryAfter
 
 # Logging konfigurieren
@@ -31,11 +28,8 @@ if not telegram_token:
 
 # Zeitzone und DB-Pfad
 TZ = ZoneInfo("Europe/Berlin")
-os.makedirs("data", exist_ok=True)
-DB_PATH = "data/database.db"
-
-# Conversation-States
-CHOOSING_GAME, TYPING_SCORE = range(2)
+DB_PATH = os.path.join(os.getcwd(), "data", "database.db")
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # Datenbank initialisieren
 def init_db():
@@ -112,30 +106,21 @@ async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply = "⚠️ Entschuldigung, gerade nicht verfügbar."
     await context.bot.send_message(chat_id=chat_id, text=reply)
 
-# Beispiel für einen einfachen CommandHandler (Begrüßung)
+# Start-Befehl als Beispiel
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hallo! Ich bin dein Chat-GPT-Bot.")
+    await update.message.reply_text("Hallo! Ich werde deine Nachrichten an ChatGPT weiterleiten.")
 
 # Main
 if __name__ == "__main__":
     init_db()
     app = ApplicationBuilder().token(telegram_token).build()
 
-    # Beispiel: Start-Befehl
+    # Start-Command
     app.add_handler(CommandHandler("start", start))
 
-    # ChatGPT-Handler registrieren (alle Texte ohne `/`)
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler)
-    )
+    # ChatGPT-Handler für beliebige Texte
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler))
 
-    # Lokaler Test mit Polling
+    # Bot starten (Long Polling)
     app.run_polling()
-    # Produktion (Webhook) alternativ:
-    # app.run_webhook(
-    #     listen="0.0.0.0",
-    #     port=int(os.environ.get("PORT", "8443")),
-    #     url_path=telegram_token,
-    #     webhook_url=f"https://<dein-host>/{telegram_token}"
-    # )
 ```
