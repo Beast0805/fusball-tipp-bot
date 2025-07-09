@@ -9,8 +9,8 @@ from zoneinfo import ZoneInfo
 import openai
 from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, ConversationHandler,
-    MessageHandler, filters, ContextTypes
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ConversationHandler, filters, ContextTypes
 )
 from telegram.error import BadRequest, RetryAfter
 
@@ -41,35 +41,47 @@ CHOOSING_GAME, TYPING_SCORE = range(2)
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS spielen (
-        spiel_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-        beschreibung TEXT NOT NULL,
-        startzeit    TEXT NOT NULL
-    )""")
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS tipps (
-        spiel_id   INTEGER NOT NULL,
-        user_id    INTEGER NOT NULL,
-        username   TEXT    NOT NULL,
-        tore_heim  INTEGER NOT NULL,
-        tore_gast  INTEGER NOT NULL,
-        PRIMARY KEY (spiel_id, user_id)
-    )""")
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS ergebnisse (
-        spiel_id   INTEGER PRIMARY KEY,
-        tore_heim  INTEGER NOT NULL,
-        tore_gast  INTEGER NOT NULL
-    )""")
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS punkte (
-        spiel_id   INTEGER NOT NULL,
-        user_id    INTEGER NOT NULL,
-        username   TEXT    NOT NULL,
-        punkte     INTEGER NOT NULL,
-        PRIMARY KEY (spiel_id, user_id)
-    )""")
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS spielen (
+            spiel_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            beschreibung TEXT NOT NULL,
+            startzeit    TEXT NOT NULL
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tipps (
+            spiel_id   INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL,
+            username   TEXT    NOT NULL,
+            tore_heim  INTEGER NOT NULL,
+            tore_gast  INTEGER NOT NULL,
+            PRIMARY KEY (spiel_id, user_id)
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ergebnisse (
+            spiel_id   INTEGER PRIMARY KEY,
+            tore_heim  INTEGER NOT NULL,
+            tore_gast  INTEGER NOT NULL
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS punkte (
+            spiel_id   INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL,
+            username   TEXT    NOT NULL,
+            punkte     INTEGER NOT NULL,
+            PRIMARY KEY (spiel_id, user_id)
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -78,14 +90,8 @@ async def auto_delete(msg, delay: int):
     await asyncio.sleep(delay)
     try:
         await msg.delete()
-    except BadRequest as e:
+    except (BadRequest, RetryAfter) as e:
         logging.warning(f"Failed to delete message: {e}")
-    except RetryAfter as e:
-        await asyncio.sleep(e.retry_after)
-        try:
-            await msg.delete()
-        except Exception as ex:
-            logging.warning(f"Retry delete failed: {ex}")
 
 # ChatGPT-Handler: alle Nicht-Commands landen hier
 async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,36 +103,38 @@ async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Du bist ein hilfsbereiter Assistent."},
-                {"role": "user",   "content": user_text}
-            ]
+                {"role": "user",   "content": user_text},
+            ],
         )
         reply = resp.choices[0].message.content.strip()
     except Exception as e:
         logging.error(f"OpenAI Error: {e}")
-        reply = "⚠️ Entschuldigung, ich konnte gerade keine Antwort generieren."
+        reply = "⚠️ Entschuldigung, gerade nicht verfügbar."
     await context.bot.send_message(chat_id=chat_id, text=reply)
+
+# Beispiel für einen einfachen CommandHandler (Begrüßung)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hallo! Ich bin dein Chat-GPT-Bot.")
 
 # Main
 if __name__ == "__main__":
     init_db()
     app = ApplicationBuilder().token(telegram_token).build()
 
-    # Hier deine bestehenden CommandHandler einfügen:
-    # app.add_handler(CommandHandler("start", start))
-    # app.add_handler(CommandHandler("neuenspiel", neuenspiel))
-    # ...
+    # Beispiel: Start-Befehl
+    app.add_handler(CommandHandler("start", start))
 
-    # ChatGPT-Handler registrieren
+    # ChatGPT-Handler registrieren (alle Texte ohne `/`)
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler)
     )
 
-    # Lokal testen
+    # Lokaler Test mit Polling
     app.run_polling()
-    # Für Produktion mit Webhook:
+    # Produktion (Webhook) alternativ:
     # app.run_webhook(
     #     listen="0.0.0.0",
-    #     port=int(os.environ.get("PORT",8643)),
+    #     port=int(os.environ.get("PORT", "8443")),
     #     url_path=telegram_token,
     #     webhook_url=f"https://<dein-host>/{telegram_token}"
     # )
