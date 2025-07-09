@@ -114,9 +114,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     init_db()
     app = ApplicationBuilder().token(telegram_token).build()
-    # Start-Command
     app.add_handler(CommandHandler("start", start))
-    # ChatGPT-Handler für beliebige Texte
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler))
-    # Bot starten (Long Polling)
     app.run_polling()
