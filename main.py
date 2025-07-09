@@ -140,6 +140,3 @@ if __name__ == "__main__":
         )
     else:
         register_echo(app)
-
-    # Bot starten (Long Polling)
-    app.run_polling()
