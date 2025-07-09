@@ -143,4 +143,3 @@ if __name__ == "__main__":
 
     # Bot starten (Long Polling)
     app.run_polling()
-```
