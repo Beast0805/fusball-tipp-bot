@@ -31,6 +31,7 @@ if not telegram_token:
 # Zeitzone und DB-Pfad
 TZ = ZoneInfo("Europe/Berlin")
 DB_PATH = os.path.join(os.getcwd(), "data", "database.db")
+# Verzeichnis sicherstellen
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # Datenbank initialisieren
@@ -38,16 +39,16 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
-        """
+        '''
         CREATE TABLE IF NOT EXISTS spielen (
             spiel_id     INTEGER PRIMARY KEY AUTOINCREMENT,
             beschreibung TEXT NOT NULL,
             startzeit    TEXT NOT NULL
         )
-        """
+        '''
     )
     c.execute(
-        """
+        '''
         CREATE TABLE IF NOT EXISTS tipps (
             spiel_id   INTEGER NOT NULL,
             user_id    INTEGER NOT NULL,
@@ -56,19 +57,19 @@ def init_db():
             tore_gast  INTEGER NOT NULL,
             PRIMARY KEY (spiel_id, user_id)
         )
-        """
+        '''
     )
     c.execute(
-        """
+        '''
         CREATE TABLE IF NOT EXISTS ergebnisse (
             spiel_id   INTEGER PRIMARY KEY,
             tore_heim  INTEGER NOT NULL,
             tore_gast  INTEGER NOT NULL
         )
-        """
+        '''
     )
     c.execute(
-        """
+        '''
         CREATE TABLE IF NOT EXISTS punkte (
             spiel_id   INTEGER NOT NULL,
             user_id    INTEGER NOT NULL,
@@ -76,12 +77,12 @@ def init_db():
             punkte     INTEGER NOT NULL,
             PRIMARY KEY (spiel_id, user_id)
         )
-        """
+        '''
     )
     conn.commit()
     conn.close()
 
-# Helfer: löscht Nachrichten nach delay Sekunden
+# Helfer: löscht Nachrichten nach Delay Sekunden
 async def auto_delete(msg, delay: int):
     await asyncio.sleep(delay)
     try:
@@ -93,9 +94,10 @@ async def auto_delete(msg, delay: int):
 async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     chat_id = update.effective_chat.id
+    # Tippe-Action
     await context.bot.send_chat_action(chat_id, action="typing")
     try:
-        resp = openai.ChatCompletion.create(
+        resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Du bist ein hilfsbereiter Assistent."},
@@ -106,30 +108,39 @@ async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"OpenAI Error: {e}")
         reply = "⚠️ Entschuldigung, gerade nicht verfügbar."
+    # Antwort senden
     await context.bot.send_message(chat_id=chat_id, text=reply)
+
+# Echo-Fallback, wenn ChatGPT deaktiviert ist
+def register_echo(app):
+    async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text(f"ECHO: {update.message.text}")
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, echo)
+    )
 
 # Start-Befehl als Beispiel
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hallo! Ich werde deine Nachrichten an ChatGPT weiterleiten.")
+    await update.message.reply_text(
+        "Hallo! Ich leite Nachrichten entweder an ChatGPT weiter oder echoe sie zurück."
+    )
 
 # Main
 if __name__ == "__main__":
     init_db()
     app = ApplicationBuilder().token(telegram_token).build()
-    # Start-Command
+
+    # /start registrieren
     app.add_handler(CommandHandler("start", start))
 
-    # ChatGPT-Handler oder Echo-Fallback
+    # entweder ChatGPT-Handler oder Echo-Fallback
     if use_chatgpt:
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler)
         )
     else:
-        async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            await update.message.reply_text(f"ECHO: {update.message.text}")
-        app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, echo)
-        )
+        register_echo(app)
 
     # Bot starten (Long Polling)
     app.run_polling()
+```
