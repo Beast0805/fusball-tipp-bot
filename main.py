@@ -140,3 +140,15 @@ if __name__ == "__main__":
         )
     else:
         register_echo(app)
+            # Webhook-Setup (statt run_polling)
+    PORT        = int(os.environ["PORT"])
+    SERVICE_URL = os.environ["RENDER_EXTERNAL_URL"].rstrip("/")
+    TOKEN       = os.getenv("TELEGRAM_TOKEN")
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,
+        webhook_url=f"{SERVICE_URL}/{TOKEN}"
+    )
+
