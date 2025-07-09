@@ -17,8 +17,10 @@ logging.basicConfig(level=logging.INFO)
 # OpenAI API-Key aus Umgebungsvariablen
 openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
-    logging.error("OPENAI_API_KEY ist nicht gesetzt!")
-    sys.exit(1)
+    logging.warning("OPENAI_API_KEY ist nicht gesetzt – ChatGPT-Funktion wird deaktiviert.")
+    use_chatgpt = False
+else:
+    use_chatgpt = True
 
 # Telegram-Token aus Umgebungsvariablen
 telegram_token = os.getenv("TELEGRAM_TOKEN")
@@ -114,6 +116,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     init_db()
     app = ApplicationBuilder().token(telegram_token).build()
+    # Start-Command
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler))
+
+    # ChatGPT-Handler oder Echo-Fallback
+    if use_chatgpt:
+        app.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, chatgpt_handler)
+        )
+    else:
+        async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            await update.message.reply_text(f"ECHO: {update.message.text}")
+        app.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, echo)
+        )
+
+    # Bot starten (Long Polling)
     app.run_polling()
