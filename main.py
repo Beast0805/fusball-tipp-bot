@@ -97,13 +97,23 @@ async def chatgpt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Tippe-Action
     await context.bot.send_chat_action(chat_id, action="typing")
     try:
-        resp = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Du bist ein hilfsbereiter Assistent."},
-                {"role": "user",   "content": user_text}
-            ]
-        )
+        if hasattr(openai, "AsyncOpenAI"):
+            client = openai.AsyncOpenAI(api_key=openai.api_key)
+            resp = await client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "Du bist ein hilfsbereiter Assistent."},
+                    {"role": "user", "content": user_text},
+                ],
+            )
+        else:
+            resp = await openai.ChatCompletion.acreate(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "Du bist ein hilfsbereiter Assistent."},
+                    {"role": "user", "content": user_text},
+                ],
+            )
         reply = resp.choices[0].message.content.strip()
     except Exception as e:
         logging.error(f"OpenAI Error: {e}")
@@ -140,10 +150,10 @@ if __name__ == "__main__":
         )
     else:
         register_echo(app)
-            # Webhook-Setup (statt run_polling)
-    PORT        = int(os.environ["PORT"])
+    # Webhook-Setup (statt run_polling)
+    PORT = int(os.environ["PORT"])
     SERVICE_URL = os.environ["RENDER_EXTERNAL_URL"].rstrip("/")
-    TOKEN       = os.getenv("TELEGRAM_TOKEN")
+    TOKEN = os.getenv("TELEGRAM_TOKEN")
 
     app.run_webhook(
         listen="0.0.0.0",
